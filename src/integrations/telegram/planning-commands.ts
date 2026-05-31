@@ -7,7 +7,9 @@ import type { AppConfig } from "../../config/config.js";
 import {
   formatActivityConfirmation,
   formatActivitySaved,
+  formatConflictWarning,
 } from "../../domain/planned-activity-formatting.js";
+import { findConflicts } from "../../domain/conflict-detection.js";
 import { parsePlanCommand, getPlanCommandUsage } from "../../domain/plan-command-parser.js";
 import { renderCalendarTitle, toGoogleVisibility } from "../../domain/privacy-rendering.js";
 import type { CalendarGateway } from "../calendar/google-calendar-gateway.js";
@@ -64,6 +66,22 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
       return;
     }
 
+    const conflictCheck = await checkPlanConflicts(plannedActivities, parsed.activity);
+
+    if (conflictCheck.conflicts.length > 0) {
+      const token = randomUUID();
+      pendingPlans.set(token, parsed.activity);
+
+      await ctx.reply(formatConflictWarning({ requested: parsed.activity, ...conflictCheck }), {
+        reply_markup: conflictCheck.alternatives.reduce(
+          (keyboard, alternative, index) =>
+            keyboard.text(`Use option ${index + 1}`, `plan:alternative:${token}:${index}`).row(),
+          new InlineKeyboard(),
+        ).text("Cancel", `plan:cancel:${token}`),
+      });
+      return;
+    }
+
     const token = randomUUID();
     pendingPlans.set(token, parsed.activity);
 
@@ -82,6 +100,14 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
 
     if (!activity) {
       await ctx.reply("This planning confirmation expired. Please send /plan again.");
+      return;
+    }
+
+    const conflictCheck = await checkPlanConflicts(plannedActivities, activity);
+
+    if (conflictCheck.conflicts.length > 0) {
+      await ctx.reply("This plan now conflicts with another activity. Please send /plan again.");
+      pendingPlans.delete(token);
       return;
     }
 
@@ -140,6 +166,42 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     await ctx.reply("Planning cancelled. Nothing was saved.");
   });
 
+  bot.callbackQuery(/^plan:alternative:(.+):(\d+)$/, async (ctx) => {
+    const token = ctx.match[1];
+    const index = Number(ctx.match[2]);
+    const activity = pendingPlans.get(token);
+
+    await ctx.answerCallbackQuery();
+
+    if (!activity) {
+      await ctx.reply("This planning confirmation expired. Please send /plan again.");
+      return;
+    }
+
+    const conflictCheck = await checkPlanConflicts(plannedActivities, activity);
+    const alternative = conflictCheck.alternatives[index];
+
+    if (!alternative) {
+      await ctx.reply("That alternative is no longer available. Please send /plan again.");
+      pendingPlans.delete(token);
+      return;
+    }
+
+    const updatedActivity: NewPlannedActivity = {
+      ...activity,
+      startsAt: alternative.startsAt,
+      endsAt: alternative.endsAt,
+    };
+
+    pendingPlans.set(token, updatedActivity);
+
+    await ctx.reply(formatActivityConfirmation(updatedActivity), {
+      reply_markup: new InlineKeyboard()
+        .text("Create", `plan:create:${token}`)
+        .text("Cancel", `plan:cancel:${token}`),
+    });
+  });
+
   bot.command("today", async (ctx) => {
     const now = DateTime.now().setZone(config.timezone);
     const activities = await plannedActivities.listBetween({
@@ -159,6 +221,18 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
 
     await ctx.reply(formatActivitySummary("This week", activities, config.timezone));
   });
+}
+
+async function checkPlanConflicts(
+  plannedActivities: PlannedActivityRepository,
+  activity: NewPlannedActivity,
+) {
+  const candidates = await plannedActivities.listBetween({
+    startsAt: DateTime.fromISO(activity.startsAt).minus({ days: 1 }).toISO() ?? activity.startsAt,
+    endsAt: DateTime.fromISO(activity.endsAt).plus({ days: 1 }).toISO() ?? activity.endsAt,
+  });
+
+  return findConflicts(activity, candidates);
 }
 
 function formatActivitySummary(

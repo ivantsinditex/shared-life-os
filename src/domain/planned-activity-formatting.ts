@@ -1,5 +1,6 @@
 import { DateTime } from "luxon";
 
+import type { TimeSlot } from "./conflict-detection.js";
 import { renderCalendarTitle } from "./privacy-rendering.js";
 import type { NewPlannedActivity, PlannedActivity } from "./planned-activity.js";
 
@@ -25,6 +26,32 @@ export function formatActivitySaved(activity: PlannedActivity): string {
     `Participant: ${activity.participant}`,
     `Category: ${activity.category}`,
     `Calendar sync: ${activity.syncStatus}`,
+  ].join("\n");
+}
+
+export function formatConflictWarning(params: {
+  requested: NewPlannedActivity;
+  conflicts: PlannedActivity[];
+  alternatives: TimeSlot[];
+}): string {
+  const conflicts = params.conflicts.map((activity) =>
+    `- ${formatRange(activity.startsAt, activity.endsAt, activity.timezone)} | ${activity.participant} | ${activity.category} | ${renderCalendarTitle(activity)}`,
+  );
+  const alternatives = params.alternatives.map(
+    (slot, index) => `${index + 1}. ${formatRange(slot.startsAt, slot.endsAt, params.requested.timezone)}`,
+  );
+
+  return [
+    "This time conflicts with existing plans.",
+    "",
+    "Requested:",
+    formatRange(params.requested.startsAt, params.requested.endsAt, params.requested.timezone),
+    "",
+    "Conflicts:",
+    ...conflicts,
+    "",
+    "Suggested alternatives:",
+    ...alternatives,
   ].join("\n");
 }
 

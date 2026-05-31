@@ -13,6 +13,7 @@ This repository currently covers the T1-T4 foundation:
 - file-based planned activity repository for MVP development;
 - Telegram command shell for health and planning summaries;
 - `/plan` command with confirmation buttons;
+- local conflict detection with suggested alternatives;
 - Google Calendar gateway for event creation when credentials are configured.
 
 ## Setup
@@ -55,5 +56,5 @@ Core fields:
 
 1. Richer guided Telegram planning flow with follow-up questions for missing fields.
 2. Calendar retry flow for records with failed sync.
-3. Conflict detection and alternative suggestions.
+3. Google Calendar free/busy conflict checks in addition to local planned activity checks.
 4. Update/delete flows.
