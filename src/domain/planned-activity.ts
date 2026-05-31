@@ -53,6 +53,7 @@ export type NewPlannedActivity = Omit<
 export interface PlannedActivityRepository {
   init(): Promise<void>;
   create(activity: NewPlannedActivity): Promise<PlannedActivity>;
+  listAll(): Promise<PlannedActivity[]>;
   listBetween(params: {
     startsAt: string;
     endsAt: string;

@@ -49,6 +49,10 @@ export class FilePlannedActivityRepository implements PlannedActivityRepository 
     return created;
   }
 
+  async listAll(): Promise<PlannedActivity[]> {
+    return [...this.activities].sort((a, b) => Date.parse(a.startsAt) - Date.parse(b.startsAt));
+  }
+
   async listBetween(params: {
     startsAt: string;
     endsAt: string;

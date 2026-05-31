@@ -1,6 +1,7 @@
 import { Bot } from "grammy";
 
 import type { AppConfig } from "../config/config.js";
+import { createCalendarGateway } from "../integrations/calendar/google-calendar-gateway.js";
 import { createPlanningCommands } from "../integrations/telegram/planning-commands.js";
 import { FilePlannedActivityRepository } from "../storage/file-planned-activity-repository.js";
 import { ConsoleLogger } from "../utils/logger.js";
@@ -13,9 +14,11 @@ export function createApp(config: AppConfig): App {
   const logger = new ConsoleLogger();
   const bot = new Bot(config.telegramBotToken);
   const plannedActivities = new FilePlannedActivityRepository(config.dataDir);
+  const calendar = createCalendarGateway(config);
 
   createPlanningCommands({
     bot,
+    calendar,
     config,
     logger,
     plannedActivities,

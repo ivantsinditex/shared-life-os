@@ -4,14 +4,16 @@ Telegram-first planning system for shared weekly life planning, Google Calendar 
 
 ## Current Slice
 
-This repository starts with the technical-plan T1-T2 foundation:
+This repository currently covers the T1-T4 foundation:
 
 - runnable TypeScript/Node.js service shell;
 - environment configuration;
 - known-user mapping for Vania and Nastia;
 - planned activity domain model;
 - file-based planned activity repository for MVP development;
-- Telegram command shell for health and planning summaries.
+- Telegram command shell for health and planning summaries;
+- `/plan` command with confirmation buttons;
+- Google Calendar gateway for event creation when credentials are configured.
 
 ## Setup
 
@@ -19,6 +21,21 @@ This repository starts with the technical-plan T1-T2 foundation:
 npm install
 cp .env.example .env
 npm run dev
+```
+
+## Telegram Commands
+
+```text
+/health
+/today
+/week
+/plan Title | participant | category | YYYY-MM-DD HH:mm | duration_minutes | privacy
+```
+
+Example:
+
+```text
+/plan Workout | vania | sport | 2026-06-01 08:00 | 60 | busy_only
 ```
 
 ## Planned Activity Concept
@@ -36,9 +53,7 @@ Core fields:
 
 ## Next Implementation Slice
 
-T3-T4:
-
-1. Guided Telegram planning flow.
-2. Google Calendar event gateway.
-3. Confirmation before calendar writes.
-4. Calendar sync status updates.
+1. Richer guided Telegram planning flow with follow-up questions for missing fields.
+2. Calendar retry flow for records with failed sync.
+3. Conflict detection and alternative suggestions.
+4. Update/delete flows.
