@@ -18,7 +18,11 @@ import {
   getPlanCommandUsage,
   getUpdateCommandUsage,
 } from "../../domain/plan-command-parser.js";
-import { renderCalendarTitle, toGoogleVisibility } from "../../domain/privacy-rendering.js";
+import {
+  renderCalendarDescription,
+  renderCalendarTitle,
+  toGoogleVisibility,
+} from "../../domain/privacy-rendering.js";
 import type { CalendarGateway } from "../calendar/google-calendar-gateway.js";
 import type { NewPlannedActivity, PlannedActivity } from "../../domain/planned-activity.js";
 import type { PlannedActivityRepository } from "../../domain/planned-activity.js";
@@ -428,13 +432,7 @@ async function syncActivityToCalendar(params: {
       timezone: params.activity.timezone,
       visibility: toGoogleVisibility(params.activity.privacy),
       transparency: "opaque" as const,
-      description: [
-        "Created by Shared Life OS.",
-        `Internal title: ${params.activity.title}`,
-        `Participant: ${params.activity.participant}`,
-        `Category: ${params.activity.category}`,
-        `Privacy: ${params.activity.privacy}`,
-      ].join("\n"),
+      description: renderCalendarDescription(params.activity),
     };
     const event = params.activity.googleCalendarEventId
       ? await params.calendar.updateEvent(params.activity.googleCalendarEventId, draft)
