@@ -7,6 +7,8 @@ const configSchema = z.object({
   GOOGLE_CALENDAR_ID: z.string().optional(),
   GOOGLE_CLIENT_EMAIL: z.string().optional(),
   GOOGLE_PRIVATE_KEY: z.string().optional(),
+  OPENAI_API_KEY: z.string().optional(),
+  OPENAI_TRANSCRIPTION_MODEL: z.string().default("gpt-4o-mini-transcribe"),
 });
 
 export type AppConfig = {
@@ -16,6 +18,8 @@ export type AppConfig = {
   googleCalendarId?: string;
   googleClientEmail?: string;
   googlePrivateKey?: string;
+  openAiApiKey?: string;
+  openAiTranscriptionModel: string;
   users: KnownUser[];
 };
 
@@ -35,6 +39,8 @@ export function loadConfig(): AppConfig {
     googleCalendarId: env.GOOGLE_CALENDAR_ID,
     googleClientEmail: env.GOOGLE_CLIENT_EMAIL,
     googlePrivateKey: env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, "\n"),
+    openAiApiKey: env.OPENAI_API_KEY,
+    openAiTranscriptionModel: env.OPENAI_TRANSCRIPTION_MODEL,
     users: [
       {
         key: "vania",

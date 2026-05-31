@@ -24,6 +24,7 @@ import {
   toGoogleVisibility,
 } from "../../domain/privacy-rendering.js";
 import type { CalendarBusySlot, CalendarGateway } from "../calendar/google-calendar-gateway.js";
+import type { VoiceTranscriptionGateway } from "../voice/openai-transcription-gateway.js";
 import type { NewPlannedActivity, PlannedActivity } from "../../domain/planned-activity.js";
 import type { PlannedActivityRepository } from "../../domain/planned-activity.js";
 import type { Logger } from "../../utils/logger.js";
@@ -34,10 +35,11 @@ type PlanningCommandDeps = {
   config: AppConfig;
   logger: Logger;
   plannedActivities: PlannedActivityRepository;
+  voiceTranscription: VoiceTranscriptionGateway;
 };
 
 export function createPlanningCommands(deps: PlanningCommandDeps): void {
-  const { bot, calendar, config, logger, plannedActivities } = deps;
+  const { bot, calendar, config, logger, plannedActivities, voiceTranscription } = deps;
   const pendingPlans = new Map<string, NewPlannedActivity>();
   const pendingUpdates = new Map<string, PendingUpdate>();
   const pendingDeletes = new Map<string, PlannedActivity>();
@@ -54,6 +56,8 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
         "/sync_failed - show activities that need calendar retry",
         "/today - show today's planned activities",
         "/week - show this week's planned activities",
+        "",
+        "Voice messages can contain /plan or /update text too.",
       ].join("\n"),
     );
   });
@@ -66,9 +70,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     await ctx.reply("OK. Planning service is running.");
   });
 
-  bot.command("plan", async (ctx) => {
-    const input = ctx.match.trim();
-
+  const handlePlanInput = async (ctx: Context, input: string): Promise<void> => {
     if (!input) {
       await ctx.reply(getPlanCommandUsage());
       return;
@@ -105,6 +107,98 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
         .text("Create", `plan:create:${token}`)
         .text("Cancel", `plan:cancel:${token}`),
     });
+  };
+
+  const handleUpdateInput = async (ctx: Context, input: string): Promise<void> => {
+    if (!input) {
+      await ctx.reply(getUpdateCommandUsage());
+      return;
+    }
+
+    const parsed = parseUpdateCommand(input, config.timezone);
+
+    if (!parsed.ok) {
+      await ctx.reply(parsed.error);
+      return;
+    }
+
+    const existing = await plannedActivities.findByShortId(parsed.shortId);
+
+    if (!existing || existing.syncStatus === "deleted") {
+      await ctx.reply(`Could not find one active planned activity for id "${parsed.shortId}".`);
+      return;
+    }
+
+    const updated: PlannedActivity = {
+      ...existing,
+      ...parsed.activity,
+      googleCalendarEventId: existing.googleCalendarEventId,
+      syncStatus: existing.syncStatus,
+      createdAt: existing.createdAt,
+      updatedAt: existing.updatedAt,
+    };
+    const conflictCheck = await checkPlanConflicts(
+      plannedActivities,
+      calendar,
+      parsed.activity,
+      existing.id,
+    );
+
+    if (conflictCheck.conflicts.length > 0) {
+      await ctx.reply(formatConflictWarning({ requested: parsed.activity, ...conflictCheck }));
+      return;
+    }
+
+    const token = randomUUID();
+    pendingUpdates.set(token, { existing, updated });
+
+    await ctx.reply(["Update planned activity?", "", formatUpdatePreview(existing, updated)].join("\n"), {
+      reply_markup: new InlineKeyboard()
+        .text("Update", `plan:update:${token}`)
+        .text("Cancel", `plan:update-cancel:${token}`),
+    });
+  };
+
+  bot.command("plan", async (ctx) => {
+    await handlePlanInput(ctx, ctx.match.trim());
+  });
+
+  bot.on("message:voice", async (ctx) => {
+    if (!voiceTranscription.isEnabled()) {
+      await ctx.reply("Voice input is not configured yet. Set OPENAI_API_KEY and restart the bot.");
+      return;
+    }
+
+    try {
+      const transcript = await transcribeTelegramVoice(ctx, config, voiceTranscription);
+      const routed = routeVoiceCommand(transcript);
+
+      await ctx.reply(`Voice transcript:\n${transcript}`);
+
+      if (routed.command === "plan") {
+        await handlePlanInput(ctx, routed.input);
+        return;
+      }
+
+      if (routed.command === "update") {
+        await handleUpdateInput(ctx, routed.input);
+        return;
+      }
+
+      await ctx.reply(
+        [
+          "I understood the audio, but do not know which action to run yet.",
+          "Please say or include /plan ... or /update ... in the voice message.",
+        ].join("\n"),
+      );
+    } catch (error) {
+      logger.warn("Voice command failed", {
+        error: error instanceof Error ? error.message : String(error),
+        telegramUserId: ctx.from?.id,
+      });
+
+      await ctx.reply("Voice processing failed. Please try again or send the command as text.");
+    }
   });
 
   bot.callbackQuery(/^plan:create:(.+)$/, async (ctx) => {
@@ -181,55 +275,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
   });
 
   bot.command("update", async (ctx) => {
-    const input = ctx.match.trim();
-
-    if (!input) {
-      await ctx.reply(getUpdateCommandUsage());
-      return;
-    }
-
-    const parsed = parseUpdateCommand(input, config.timezone);
-
-    if (!parsed.ok) {
-      await ctx.reply(parsed.error);
-      return;
-    }
-
-    const existing = await plannedActivities.findByShortId(parsed.shortId);
-
-    if (!existing || existing.syncStatus === "deleted") {
-      await ctx.reply(`Could not find one active planned activity for id "${parsed.shortId}".`);
-      return;
-    }
-
-    const updated: PlannedActivity = {
-      ...existing,
-      ...parsed.activity,
-      googleCalendarEventId: existing.googleCalendarEventId,
-      syncStatus: existing.syncStatus,
-      createdAt: existing.createdAt,
-      updatedAt: existing.updatedAt,
-    };
-    const conflictCheck = await checkPlanConflicts(
-      plannedActivities,
-      calendar,
-      parsed.activity,
-      existing.id,
-    );
-
-    if (conflictCheck.conflicts.length > 0) {
-      await ctx.reply(formatConflictWarning({ requested: parsed.activity, ...conflictCheck }));
-      return;
-    }
-
-    const token = randomUUID();
-    pendingUpdates.set(token, { existing, updated });
-
-    await ctx.reply(["Update planned activity?", "", formatUpdatePreview(existing, updated)].join("\n"), {
-      reply_markup: new InlineKeyboard()
-        .text("Update", `plan:update:${token}`)
-        .text("Cancel", `plan:update-cancel:${token}`),
-    });
+    await handleUpdateInput(ctx, ctx.match.trim());
   });
 
   bot.callbackQuery(/^plan:update:(.+)$/, async (ctx) => {
@@ -392,6 +438,62 @@ type PendingUpdate = {
   existing: PlannedActivity;
   updated: PlannedActivity;
 };
+
+async function transcribeTelegramVoice(
+  ctx: Context,
+  config: AppConfig,
+  voiceTranscription: VoiceTranscriptionGateway,
+): Promise<string> {
+  const voice = ctx.message?.voice;
+
+  if (!voice) {
+    throw new Error("Telegram update did not include a voice message.");
+  }
+
+  const file = await ctx.api.getFile(voice.file_id);
+
+  if (!file.file_path) {
+    throw new Error("Telegram did not return a voice file path.");
+  }
+
+  const response = await fetch(
+    `https://api.telegram.org/file/bot${config.telegramBotToken}/${file.file_path}`,
+  );
+
+  if (!response.ok) {
+    throw new Error(`Telegram voice download failed: ${response.status}`);
+  }
+
+  return voiceTranscription.transcribe({
+    audio: await response.arrayBuffer(),
+    filename: `${voice.file_unique_id}.ogg`,
+    mimeType: "audio/ogg",
+  });
+}
+
+function routeVoiceCommand(transcript: string):
+  | { command: "plan"; input: string }
+  | { command: "update"; input: string }
+  | { command: "unknown" } {
+  const normalized = transcript.trim();
+  const commandMatch = normalized.match(/^\/?(plan|update)(?:@\w+)?\s+([\s\S]+)$/i);
+
+  if (commandMatch?.[1] && commandMatch[2]) {
+    return {
+      command: commandMatch[1].toLowerCase() as "plan" | "update",
+      input: commandMatch[2].trim(),
+    };
+  }
+
+  if (normalized.includes("|")) {
+    return {
+      command: "plan",
+      input: normalized,
+    };
+  }
+
+  return { command: "unknown" };
+}
 
 async function checkPlanConflicts(
   plannedActivities: PlannedActivityRepository,
