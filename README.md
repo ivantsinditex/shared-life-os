@@ -14,6 +14,7 @@ This repository currently covers the T1-T4 foundation:
 - Telegram command shell for health and planning summaries;
 - `/plan` command with confirmation buttons;
 - local conflict detection with suggested alternatives;
+- Google Calendar free/busy checks for manually-created calendar blocks;
 - Google Calendar gateway for event creation when credentials are configured.
 
 ## Setup
@@ -68,5 +69,4 @@ That calendar must be shared with the service account email using **Make changes
 
 1. Richer guided Telegram planning flow with follow-up questions for missing fields.
 2. Calendar retry flow for records with failed sync.
-3. Google Calendar free/busy conflict checks in addition to local planned activity checks.
-4. Voice command capture.
+3. Voice command capture.

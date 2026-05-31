@@ -23,7 +23,7 @@ import {
   renderCalendarTitle,
   toGoogleVisibility,
 } from "../../domain/privacy-rendering.js";
-import type { CalendarGateway } from "../calendar/google-calendar-gateway.js";
+import type { CalendarBusySlot, CalendarGateway } from "../calendar/google-calendar-gateway.js";
 import type { NewPlannedActivity, PlannedActivity } from "../../domain/planned-activity.js";
 import type { PlannedActivityRepository } from "../../domain/planned-activity.js";
 import type { Logger } from "../../utils/logger.js";
@@ -80,7 +80,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
       return;
     }
 
-    const conflictCheck = await checkPlanConflicts(plannedActivities, parsed.activity);
+    const conflictCheck = await checkPlanConflicts(plannedActivities, calendar, parsed.activity);
 
     if (conflictCheck.conflicts.length > 0) {
       const token = randomUUID();
@@ -117,7 +117,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
       return;
     }
 
-    const conflictCheck = await checkPlanConflicts(plannedActivities, activity);
+    const conflictCheck = await checkPlanConflicts(plannedActivities, calendar, activity);
 
     if (conflictCheck.conflicts.length > 0) {
       await ctx.reply("This plan now conflicts with another activity. Please send /plan again.");
@@ -155,7 +155,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
       return;
     }
 
-    const conflictCheck = await checkPlanConflicts(plannedActivities, activity);
+    const conflictCheck = await checkPlanConflicts(plannedActivities, calendar, activity);
     const alternative = conflictCheck.alternatives[index];
 
     if (!alternative) {
@@ -209,7 +209,12 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
       createdAt: existing.createdAt,
       updatedAt: existing.updatedAt,
     };
-    const conflictCheck = await checkPlanConflicts(plannedActivities, parsed.activity, existing.id);
+    const conflictCheck = await checkPlanConflicts(
+      plannedActivities,
+      calendar,
+      parsed.activity,
+      existing.id,
+    );
 
     if (conflictCheck.conflicts.length > 0) {
       await ctx.reply(formatConflictWarning({ requested: parsed.activity, ...conflictCheck }));
@@ -354,18 +359,34 @@ type PendingUpdate = {
 
 async function checkPlanConflicts(
   plannedActivities: PlannedActivityRepository,
+  calendar: CalendarGateway,
   activity: NewPlannedActivity,
   ignoredActivityId?: string,
 ) {
-  const candidates = await plannedActivities.listBetween({
+  const window = {
     startsAt: DateTime.fromISO(activity.startsAt).minus({ days: 1 }).toISO() ?? activity.startsAt,
     endsAt: DateTime.fromISO(activity.endsAt).plus({ days: 1 }).toISO() ?? activity.endsAt,
-  });
-
-  return findConflicts(
-    activity,
-    candidates.filter((candidate) => candidate.id !== ignoredActivityId),
+  };
+  const localCandidates = await plannedActivities.listBetween(window);
+  const filteredLocalCandidates = localCandidates.filter(
+    (candidate) => candidate.id !== ignoredActivityId,
   );
+  const externalBusySlots = await calendar.listBusySlots({
+    startsAt: window.startsAt,
+    endsAt: window.endsAt,
+  });
+  const externalCandidates = externalBusySlots
+    .filter(
+      (slot) =>
+        !localCandidates.some((candidate) => timeRangesOverlap(slot, candidate)) &&
+        (!ignoredActivityId ||
+          !localCandidates.some(
+            (candidate) => candidate.id === ignoredActivityId && timeRangesOverlap(slot, candidate),
+          )),
+    )
+    .map((slot) => toExternalBusyActivity(slot, activity.timezone));
+
+  return findConflicts(activity, [...filteredLocalCandidates, ...externalCandidates]);
 }
 
 async function replyWithActivitySummary(
@@ -481,6 +502,33 @@ function formatUpdatePreview(existing: PlannedActivity, updated: PlannedActivity
 
 function shortId(id: string): string {
   return id.slice(0, 8);
+}
+
+function toExternalBusyActivity(slot: CalendarBusySlot, timezone: string): PlannedActivity {
+  const now = new Date().toISOString();
+
+  return {
+    id: `calendar-busy-${slot.startsAt}`,
+    title: "External calendar busy",
+    participant: "both",
+    category: "other",
+    startsAt: slot.startsAt,
+    endsAt: slot.endsAt,
+    timezone,
+    privacy: "busy_only",
+    isSharedActivity: true,
+    syncStatus: "synced",
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+function timeRangesOverlap(
+  left: Pick<CalendarBusySlot, "startsAt" | "endsAt">,
+  right: Pick<PlannedActivity, "startsAt" | "endsAt">,
+): boolean {
+  return Date.parse(left.startsAt) < Date.parse(right.endsAt)
+    && Date.parse(left.endsAt) > Date.parse(right.startsAt);
 }
 
 function toIso(dateTime: DateTime): string {

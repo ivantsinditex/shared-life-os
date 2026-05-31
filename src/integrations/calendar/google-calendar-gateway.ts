@@ -17,10 +17,16 @@ export type CalendarEventLink = {
   htmlLink?: string;
 };
 
+export type CalendarBusySlot = {
+  startsAt: string;
+  endsAt: string;
+};
+
 export interface CalendarGateway {
   createEvent(draft: CalendarEventDraft): Promise<CalendarEventLink>;
   updateEvent(eventId: string, draft: CalendarEventDraft): Promise<CalendarEventLink>;
   deleteEvent(eventId: string): Promise<void>;
+  listBusySlots(params: { startsAt: string; endsAt: string }): Promise<CalendarBusySlot[]>;
 }
 
 export function createCalendarGateway(config: AppConfig): CalendarGateway {
@@ -90,6 +96,29 @@ export class GoogleCalendarGateway implements CalendarGateway {
       eventId,
     });
   }
+
+  async listBusySlots(params: { startsAt: string; endsAt: string }): Promise<CalendarBusySlot[]> {
+    const response = await this.calendar.freebusy.query({
+      auth: this.auth,
+      requestBody: {
+        timeMin: params.startsAt,
+        timeMax: params.endsAt,
+        items: [
+          {
+            id: this.config.googleCalendarId,
+          },
+        ],
+      },
+    });
+    const busySlots = response.data.calendars?.[this.config.googleCalendarId]?.busy ?? [];
+
+    return busySlots
+      .filter((slot) => slot.start && slot.end)
+      .map((slot) => ({
+        startsAt: slot.start as string,
+        endsAt: slot.end as string,
+      }));
+  }
 }
 
 export class DisabledCalendarGateway implements CalendarGateway {
@@ -103,6 +132,10 @@ export class DisabledCalendarGateway implements CalendarGateway {
 
   async deleteEvent(): Promise<void> {
     throw new Error("Google Calendar credentials are not configured");
+  }
+
+  async listBusySlots(): Promise<CalendarBusySlot[]> {
+    return [];
   }
 }
 
