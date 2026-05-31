@@ -116,7 +116,6 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
 
     try {
       const event = await calendar.createEvent({
-        participant: saved.participant,
         title: renderCalendarTitle(saved),
         startsAt: saved.startsAt,
         endsAt: saved.endsAt,

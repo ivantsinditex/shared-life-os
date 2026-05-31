@@ -1,10 +1,8 @@
 import { google } from "googleapis";
 
 import type { AppConfig } from "../../config/config.js";
-import type { Participant } from "../../domain/planned-activity.js";
 
 export type CalendarEventDraft = {
-  participant: Participant;
   title: string;
   startsAt: string;
   endsAt: string;
@@ -26,12 +24,13 @@ export interface CalendarGateway {
 }
 
 export function createCalendarGateway(config: AppConfig): CalendarGateway {
-  if (!config.googleClientEmail || !config.googlePrivateKey) {
+  if (!config.googleCalendarId || !config.googleClientEmail || !config.googlePrivateKey) {
     return new DisabledCalendarGateway();
   }
 
   return new GoogleCalendarGateway({
     ...config,
+    googleCalendarId: config.googleCalendarId,
     googleClientEmail: config.googleClientEmail,
     googlePrivateKey: config.googlePrivateKey,
   });
@@ -50,10 +49,9 @@ export class GoogleCalendarGateway implements CalendarGateway {
   }
 
   async createEvent(draft: CalendarEventDraft): Promise<CalendarEventLink> {
-    const calendarId = getCalendarId(this.config, draft.participant);
     const response = await this.calendar.events.insert({
       auth: this.auth,
-      calendarId,
+      calendarId: this.config.googleCalendarId,
       requestBody: toGoogleEvent(draft),
     });
 
@@ -68,10 +66,9 @@ export class GoogleCalendarGateway implements CalendarGateway {
   }
 
   async updateEvent(eventId: string, draft: CalendarEventDraft): Promise<CalendarEventLink> {
-    const calendarId = getCalendarId(this.config, draft.participant);
     const response = await this.calendar.events.update({
       auth: this.auth,
-      calendarId,
+      calendarId: this.config.googleCalendarId,
       eventId,
       requestBody: toGoogleEvent(draft),
     });
@@ -89,7 +86,7 @@ export class GoogleCalendarGateway implements CalendarGateway {
   async deleteEvent(eventId: string): Promise<void> {
     await this.calendar.events.delete({
       auth: this.auth,
-      calendarId: this.config.googleCalendars.shared ?? "primary",
+      calendarId: this.config.googleCalendarId,
       eventId,
     });
   }
@@ -110,20 +107,10 @@ export class DisabledCalendarGateway implements CalendarGateway {
 }
 
 type RequiredGoogleCalendarConfig = AppConfig & {
+  googleCalendarId: string;
   googleClientEmail: string;
   googlePrivateKey: string;
 };
-
-export function getCalendarId(config: AppConfig, participant: Participant): string {
-  const calendarId =
-    participant === "both" ? config.googleCalendars.shared : config.googleCalendars[participant];
-
-  if (!calendarId) {
-    throw new Error(`Google Calendar ID is not configured for participant "${participant}"`);
-  }
-
-  return calendarId;
-}
 
 function toGoogleEvent(draft: CalendarEventDraft) {
   return {

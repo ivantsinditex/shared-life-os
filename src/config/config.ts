@@ -4,9 +4,7 @@ const configSchema = z.object({
   TELEGRAM_BOT_TOKEN: z.string().min(1, "TELEGRAM_BOT_TOKEN is required"),
   APP_TIMEZONE: z.string().default("Europe/Kiev"),
   DATA_DIR: z.string().default("./data"),
-  GOOGLE_CALENDAR_ID_VANIA: z.string().optional(),
-  GOOGLE_CALENDAR_ID_NASTIA: z.string().optional(),
-  GOOGLE_CALENDAR_ID_SHARED: z.string().optional(),
+  GOOGLE_CALENDAR_ID: z.string().optional(),
   GOOGLE_CLIENT_EMAIL: z.string().optional(),
   GOOGLE_PRIVATE_KEY: z.string().optional(),
 });
@@ -15,11 +13,7 @@ export type AppConfig = {
   telegramBotToken: string;
   timezone: string;
   dataDir: string;
-  googleCalendars: {
-    vania?: string;
-    nastia?: string;
-    shared?: string;
-  };
+  googleCalendarId?: string;
   googleClientEmail?: string;
   googlePrivateKey?: string;
   users: KnownUser[];
@@ -38,11 +32,7 @@ export function loadConfig(): AppConfig {
     telegramBotToken: env.TELEGRAM_BOT_TOKEN,
     timezone: env.APP_TIMEZONE,
     dataDir: env.DATA_DIR,
-    googleCalendars: {
-      vania: env.GOOGLE_CALENDAR_ID_VANIA,
-      nastia: env.GOOGLE_CALENDAR_ID_NASTIA,
-      shared: env.GOOGLE_CALENDAR_ID_SHARED,
-    },
+    googleCalendarId: env.GOOGLE_CALENDAR_ID,
     googleClientEmail: env.GOOGLE_CLIENT_EMAIL,
     googlePrivateKey: env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, "\n"),
     users: [
