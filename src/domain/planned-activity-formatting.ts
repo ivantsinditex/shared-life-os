@@ -29,6 +29,27 @@ export function formatActivitySaved(activity: PlannedActivity): string {
   ].join("\n");
 }
 
+export function formatActivityUpdated(activity: PlannedActivity): string {
+  return [
+    "Planned activity updated.",
+    "",
+    `${activity.title}`,
+    `${formatRange(activity.startsAt, activity.endsAt, activity.timezone)}`,
+    `Participant: ${activity.participant}`,
+    `Category: ${activity.category}`,
+    `Calendar sync: ${activity.syncStatus}`,
+  ].join("\n");
+}
+
+export function formatActivityDeleted(activity: PlannedActivity): string {
+  return [
+    "Planned activity deleted.",
+    "",
+    `${activity.title}`,
+    `${formatRange(activity.startsAt, activity.endsAt, activity.timezone)}`,
+  ].join("\n");
+}
+
 export function formatConflictWarning(params: {
   requested: NewPlannedActivity;
   conflicts: PlannedActivity[];

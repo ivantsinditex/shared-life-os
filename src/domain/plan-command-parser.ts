@@ -20,6 +20,17 @@ export type ParsedPlanCommand =
       error: string;
     };
 
+export type ParsedUpdateCommand =
+  | {
+      ok: true;
+      shortId: string;
+      activity: NewPlannedActivity;
+    }
+  | {
+      ok: false;
+      error: string;
+    };
+
 const usage = [
   "Use:",
   "/plan Title | participant | category | YYYY-MM-DD HH:mm | duration_minutes | privacy",
@@ -32,8 +43,20 @@ const usage = [
   `privacy: ${privacyLevels.join(", ")}`,
 ].join("\n");
 
+const updateUsage = [
+  "Use:",
+  "/update short_id | Title | participant | category | YYYY-MM-DD HH:mm | duration_minutes | privacy",
+  "",
+  "Example:",
+  "/update ab12cd34 | Yoga | vania | sport | 2026-06-01 19:00 | 60 | busy_only",
+].join("\n");
+
 export function getPlanCommandUsage(): string {
   return usage;
+}
+
+export function getUpdateCommandUsage(): string {
+  return updateUsage;
 }
 
 export function parsePlanCommand(input: string, timezone: string): ParsedPlanCommand {
@@ -106,6 +129,29 @@ export function parsePlanCommand(input: string, timezone: string): ParsedPlanCom
       privacy,
       isSharedActivity: participant === "both",
     },
+  };
+}
+
+export function parseUpdateCommand(input: string, timezone: string): ParsedUpdateCommand {
+  const [shortId, ...rest] = input.split("|").map((part) => part.trim());
+
+  if (!shortId || rest.length === 0) {
+    return {
+      ok: false,
+      error: updateUsage,
+    };
+  }
+
+  const parsed = parsePlanCommand(rest.join(" | "), timezone);
+
+  if (!parsed.ok) {
+    return parsed;
+  }
+
+  return {
+    ok: true,
+    shortId,
+    activity: parsed.activity,
   };
 }
 

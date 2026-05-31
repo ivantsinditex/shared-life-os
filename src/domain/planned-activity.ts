@@ -61,4 +61,5 @@ export interface PlannedActivityRepository {
   }): Promise<PlannedActivity[]>;
   getById(id: string): Promise<PlannedActivity | undefined>;
   update(activity: PlannedActivity): Promise<PlannedActivity>;
+  findByShortId(shortId: string): Promise<PlannedActivity | undefined>;
 }

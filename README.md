@@ -31,12 +31,19 @@ npm run dev
 /today
 /week
 /plan Title | participant | category | YYYY-MM-DD HH:mm | duration_minutes | privacy
+/update short_id | Title | participant | category | YYYY-MM-DD HH:mm | duration_minutes | privacy
 ```
 
 Example:
 
 ```text
 /plan Workout | vania | sport | 2026-06-01 08:00 | 60 | busy_only
+```
+
+Use `/today` or `/week` to see short ids and delete buttons. To update an activity, copy its short id and send:
+
+```text
+/update ab12cd34 | Yoga | vania | sport | 2026-06-01 19:00 | 60 | busy_only
 ```
 
 ## Planned Activity Concept
@@ -62,4 +69,4 @@ That calendar must be shared with the service account email using **Make changes
 1. Richer guided Telegram planning flow with follow-up questions for missing fields.
 2. Calendar retry flow for records with failed sync.
 3. Google Calendar free/busy conflict checks in addition to local planned activity checks.
-4. Update/delete flows.
+4. Voice command capture.

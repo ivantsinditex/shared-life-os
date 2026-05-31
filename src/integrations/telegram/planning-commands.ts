@@ -1,16 +1,23 @@
 import { randomUUID } from "node:crypto";
 
 import { DateTime } from "luxon";
-import { InlineKeyboard, type Bot } from "grammy";
+import { InlineKeyboard, type Bot, type Context } from "grammy";
 
 import type { AppConfig } from "../../config/config.js";
 import {
   formatActivityConfirmation,
+  formatActivityDeleted,
   formatActivitySaved,
+  formatActivityUpdated,
   formatConflictWarning,
 } from "../../domain/planned-activity-formatting.js";
 import { findConflicts } from "../../domain/conflict-detection.js";
-import { parsePlanCommand, getPlanCommandUsage } from "../../domain/plan-command-parser.js";
+import {
+  parsePlanCommand,
+  parseUpdateCommand,
+  getPlanCommandUsage,
+  getUpdateCommandUsage,
+} from "../../domain/plan-command-parser.js";
 import { renderCalendarTitle, toGoogleVisibility } from "../../domain/privacy-rendering.js";
 import type { CalendarGateway } from "../calendar/google-calendar-gateway.js";
 import type { NewPlannedActivity, PlannedActivity } from "../../domain/planned-activity.js";
@@ -28,6 +35,8 @@ type PlanningCommandDeps = {
 export function createPlanningCommands(deps: PlanningCommandDeps): void {
   const { bot, calendar, config, logger, plannedActivities } = deps;
   const pendingPlans = new Map<string, NewPlannedActivity>();
+  const pendingUpdates = new Map<string, PendingUpdate>();
+  const pendingDeletes = new Map<string, PlannedActivity>();
 
   bot.command("start", async (ctx) => {
     await ctx.reply(
@@ -37,6 +46,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
         "Available now:",
         "/health - check bot status",
         "/plan - create a planned activity",
+        "/update - update a planned activity",
         "/today - show today's planned activities",
         "/week - show this week's planned activities",
       ].join("\n"),
@@ -113,51 +123,14 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
 
     pendingPlans.delete(token);
     const saved = await plannedActivities.create(activity);
+    const synced = await syncActivityToCalendar({
+      activity: saved,
+      calendar,
+      logger,
+      plannedActivities,
+    });
 
-    try {
-      const event = await calendar.createEvent({
-        title: renderCalendarTitle(saved),
-        startsAt: saved.startsAt,
-        endsAt: saved.endsAt,
-        timezone: saved.timezone,
-        visibility: toGoogleVisibility(saved.privacy),
-        transparency: "opaque",
-        description: [
-          "Created by Shared Life OS.",
-          `Internal title: ${saved.title}`,
-          `Participant: ${saved.participant}`,
-          `Category: ${saved.category}`,
-          `Privacy: ${saved.privacy}`,
-        ].join("\n"),
-      });
-
-      const synced = await plannedActivities.update({
-        ...saved,
-        googleCalendarEventId: event.eventId,
-        syncStatus: "synced",
-      });
-
-      await ctx.reply([formatActivitySaved(synced), event.htmlLink].filter(Boolean).join("\n"));
-    } catch (error) {
-      logger.warn("Calendar sync failed after planned activity create", {
-        activityId: saved.id,
-        error: error instanceof Error ? error.message : String(error),
-      });
-
-      const failed = await plannedActivities.update({
-        ...saved,
-        syncStatus: "sync_failed",
-      });
-
-      await ctx.reply(
-        [
-          formatActivitySaved(failed),
-          "",
-          "Saved locally, but calendar sync failed.",
-          "Check Google Calendar credentials and retry sync in a later task.",
-        ].join("\n"),
-      );
-    }
+    await ctx.reply(formatActivitySyncResult(synced, formatActivitySaved(synced)));
   });
 
   bot.callbackQuery(/^plan:cancel:(.+)$/, async (ctx) => {
@@ -202,6 +175,153 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     });
   });
 
+  bot.command("update", async (ctx) => {
+    const input = ctx.match.trim();
+
+    if (!input) {
+      await ctx.reply(getUpdateCommandUsage());
+      return;
+    }
+
+    const parsed = parseUpdateCommand(input, config.timezone);
+
+    if (!parsed.ok) {
+      await ctx.reply(parsed.error);
+      return;
+    }
+
+    const existing = await plannedActivities.findByShortId(parsed.shortId);
+
+    if (!existing || existing.syncStatus === "deleted") {
+      await ctx.reply(`Could not find one active planned activity for id "${parsed.shortId}".`);
+      return;
+    }
+
+    const updated: PlannedActivity = {
+      ...existing,
+      ...parsed.activity,
+      googleCalendarEventId: existing.googleCalendarEventId,
+      syncStatus: existing.syncStatus,
+      createdAt: existing.createdAt,
+      updatedAt: existing.updatedAt,
+    };
+    const conflictCheck = await checkPlanConflicts(plannedActivities, parsed.activity, existing.id);
+
+    if (conflictCheck.conflicts.length > 0) {
+      await ctx.reply(formatConflictWarning({ requested: parsed.activity, ...conflictCheck }));
+      return;
+    }
+
+    const token = randomUUID();
+    pendingUpdates.set(token, { existing, updated });
+
+    await ctx.reply(["Update planned activity?", "", formatUpdatePreview(existing, updated)].join("\n"), {
+      reply_markup: new InlineKeyboard()
+        .text("Update", `plan:update:${token}`)
+        .text("Cancel", `plan:update-cancel:${token}`),
+    });
+  });
+
+  bot.callbackQuery(/^plan:update:(.+)$/, async (ctx) => {
+    const token = ctx.match[1];
+    const pending = pendingUpdates.get(token);
+
+    await ctx.answerCallbackQuery();
+
+    if (!pending) {
+      await ctx.reply("This update confirmation expired. Please send /update again.");
+      return;
+    }
+
+    pendingUpdates.delete(token);
+    const saved = await plannedActivities.update(pending.updated);
+    const synced = await syncActivityToCalendar({
+      activity: saved,
+      calendar,
+      logger,
+      plannedActivities,
+    });
+
+    await ctx.reply(formatActivitySyncResult(synced, formatActivityUpdated(synced)));
+  });
+
+  bot.callbackQuery(/^plan:update-cancel:(.+)$/, async (ctx) => {
+    pendingUpdates.delete(ctx.match[1]);
+    await ctx.answerCallbackQuery();
+    await ctx.reply("Update cancelled. Nothing was changed.");
+  });
+
+  bot.callbackQuery(/^plan:delete-request:(.+)$/, async (ctx) => {
+    const activity = await plannedActivities.findByShortId(ctx.match[1]);
+
+    await ctx.answerCallbackQuery();
+
+    if (!activity || activity.syncStatus === "deleted") {
+      await ctx.reply("Could not find that active planned activity.");
+      return;
+    }
+
+    const token = randomUUID();
+    pendingDeletes.set(token, activity);
+
+    await ctx.reply(["Delete planned activity?", "", formatActivitySaved(activity)].join("\n"), {
+      reply_markup: new InlineKeyboard()
+        .text("Delete", `plan:delete-confirm:${token}`)
+        .text("Cancel", `plan:delete-cancel:${token}`),
+    });
+  });
+
+  bot.callbackQuery(/^plan:delete-confirm:(.+)$/, async (ctx) => {
+    const token = ctx.match[1];
+    const activity = pendingDeletes.get(token);
+
+    await ctx.answerCallbackQuery();
+
+    if (!activity) {
+      await ctx.reply("This delete confirmation expired. Please choose the activity again.");
+      return;
+    }
+
+    pendingDeletes.delete(token);
+
+    try {
+      if (activity.googleCalendarEventId) {
+        await calendar.deleteEvent(activity.googleCalendarEventId);
+      }
+
+      const deleted = await plannedActivities.update({
+        ...activity,
+        syncStatus: "deleted",
+      });
+
+      await ctx.reply(formatActivityDeleted(deleted));
+    } catch (error) {
+      logger.warn("Calendar delete failed", {
+        activityId: activity.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+
+      const failed = await plannedActivities.update({
+        ...activity,
+        syncStatus: "sync_failed",
+      });
+
+      await ctx.reply(
+        [
+          "Calendar delete failed, so the activity was not marked deleted.",
+          "",
+          formatActivitySaved(failed),
+        ].join("\n"),
+      );
+    }
+  });
+
+  bot.callbackQuery(/^plan:delete-cancel:(.+)$/, async (ctx) => {
+    pendingDeletes.delete(ctx.match[1]);
+    await ctx.answerCallbackQuery();
+    await ctx.reply("Delete cancelled. Nothing was changed.");
+  });
+
   bot.command("today", async (ctx) => {
     const now = DateTime.now().setZone(config.timezone);
     const activities = await plannedActivities.listBetween({
@@ -209,7 +329,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
       endsAt: toIso(now.endOf("day")),
     });
 
-    await ctx.reply(formatActivitySummary("Today", activities, config.timezone));
+    await replyWithActivitySummary(ctx, "Today", activities, config.timezone);
   });
 
   bot.command("week", async (ctx) => {
@@ -219,20 +339,51 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
       endsAt: toIso(now.endOf("week")),
     });
 
-    await ctx.reply(formatActivitySummary("This week", activities, config.timezone));
+    await replyWithActivitySummary(ctx, "This week", activities, config.timezone);
   });
 }
+
+type PendingUpdate = {
+  existing: PlannedActivity;
+  updated: PlannedActivity;
+};
 
 async function checkPlanConflicts(
   plannedActivities: PlannedActivityRepository,
   activity: NewPlannedActivity,
+  ignoredActivityId?: string,
 ) {
   const candidates = await plannedActivities.listBetween({
     startsAt: DateTime.fromISO(activity.startsAt).minus({ days: 1 }).toISO() ?? activity.startsAt,
     endsAt: DateTime.fromISO(activity.endsAt).plus({ days: 1 }).toISO() ?? activity.endsAt,
   });
 
-  return findConflicts(activity, candidates);
+  return findConflicts(
+    activity,
+    candidates.filter((candidate) => candidate.id !== ignoredActivityId),
+  );
+}
+
+async function replyWithActivitySummary(
+  ctx: Context,
+  title: string,
+  activities: PlannedActivity[],
+  timezone: string,
+): Promise<void> {
+  if (activities.length === 0) {
+    await ctx.reply(`${title}: nothing planned yet.`);
+    return;
+  }
+
+  const keyboard = new InlineKeyboard();
+
+  activities.forEach((activity, index) => {
+    keyboard.text(`Delete ${index + 1}`, `plan:delete-request:${shortId(activity.id)}`).row();
+  });
+
+  await ctx.reply(formatActivitySummary(title, activities, timezone), {
+    reply_markup: keyboard,
+  });
 }
 
 function formatActivitySummary(
@@ -240,10 +391,6 @@ function formatActivitySummary(
   activities: PlannedActivity[],
   timezone: string,
 ): string {
-  if (activities.length === 0) {
-    return `${title}: nothing planned yet.`;
-  }
-
   const lines = activities.map((activity) => {
     const start = DateTime.fromISO(activity.startsAt).setZone(timezone);
     const end = DateTime.fromISO(activity.endsAt).setZone(timezone);
@@ -259,10 +406,83 @@ function formatActivitySummary(
       activity.category,
       "|",
       visibleTitle,
+      "|",
+      `id: ${shortId(activity.id)}`,
     ].join(" ");
   });
 
   return [title, "", ...lines].join("\n");
+}
+
+async function syncActivityToCalendar(params: {
+  activity: PlannedActivity;
+  calendar: CalendarGateway;
+  logger: Logger;
+  plannedActivities: PlannedActivityRepository;
+}): Promise<PlannedActivity> {
+  try {
+    const draft = {
+      title: renderCalendarTitle(params.activity),
+      startsAt: params.activity.startsAt,
+      endsAt: params.activity.endsAt,
+      timezone: params.activity.timezone,
+      visibility: toGoogleVisibility(params.activity.privacy),
+      transparency: "opaque" as const,
+      description: [
+        "Created by Shared Life OS.",
+        `Internal title: ${params.activity.title}`,
+        `Participant: ${params.activity.participant}`,
+        `Category: ${params.activity.category}`,
+        `Privacy: ${params.activity.privacy}`,
+      ].join("\n"),
+    };
+    const event = params.activity.googleCalendarEventId
+      ? await params.calendar.updateEvent(params.activity.googleCalendarEventId, draft)
+      : await params.calendar.createEvent(draft);
+
+    return params.plannedActivities.update({
+      ...params.activity,
+      googleCalendarEventId: event.eventId,
+      syncStatus: "synced",
+    });
+  } catch (error) {
+    params.logger.warn("Calendar sync failed", {
+      activityId: params.activity.id,
+      error: error instanceof Error ? error.message : String(error),
+    });
+
+    return params.plannedActivities.update({
+      ...params.activity,
+      syncStatus: "sync_failed",
+    });
+  }
+}
+
+function formatActivitySyncResult(activity: PlannedActivity, successMessage: string): string {
+  if (activity.syncStatus === "synced") {
+    return successMessage;
+  }
+
+  return [
+    successMessage,
+    "",
+    "Saved locally, but calendar sync failed.",
+    "Check Google Calendar credentials and retry sync in a later task.",
+  ].join("\n");
+}
+
+function formatUpdatePreview(existing: PlannedActivity, updated: PlannedActivity): string {
+  return [
+    "From:",
+    formatActivitySaved(existing),
+    "",
+    "To:",
+    formatActivitySaved(updated),
+  ].join("\n");
+}
+
+function shortId(id: string): string {
+  return id.slice(0, 8);
 }
 
 function toIso(dateTime: DateTime): string {

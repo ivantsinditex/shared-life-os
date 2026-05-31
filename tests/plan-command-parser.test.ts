@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parsePlanCommand } from "../src/domain/plan-command-parser.js";
+import { parsePlanCommand, parseUpdateCommand } from "../src/domain/plan-command-parser.js";
 
 describe("parsePlanCommand", () => {
   it("parses a valid plan command", () => {
@@ -33,5 +33,23 @@ describe("parsePlanCommand", () => {
     );
 
     expect(result.ok).toBe(false);
+  });
+});
+
+describe("parseUpdateCommand", () => {
+  it("parses an update command with a short id", () => {
+    const result = parseUpdateCommand(
+      "ab12cd34 | Yoga | vania | sport | 2026-06-01 19:00 | 60 | busy_only",
+      "Europe/Kiev",
+    );
+
+    expect(result.ok).toBe(true);
+
+    if (!result.ok) {
+      return;
+    }
+
+    expect(result.shortId).toBe("ab12cd34");
+    expect(result.activity.title).toBe("Yoga");
   });
 });

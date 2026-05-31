@@ -97,6 +97,12 @@ export class FilePlannedActivityRepository implements PlannedActivityRepository 
     return updated;
   }
 
+  async findByShortId(shortId: string): Promise<PlannedActivity | undefined> {
+    const matches = this.activities.filter((activity) => activity.id.startsWith(shortId));
+
+    return matches.length === 1 ? matches[0] : undefined;
+  }
+
   private async persist(): Promise<void> {
     await writeFile(this.filePath, JSON.stringify(this.activities, null, 2));
   }
