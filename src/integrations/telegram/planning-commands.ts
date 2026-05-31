@@ -51,6 +51,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
         "/health - check bot status",
         "/plan - create a planned activity",
         "/update - update a planned activity",
+        "/sync_failed - show activities that need calendar retry",
         "/today - show today's planned activities",
         "/week - show this week's planned activities",
       ].join("\n"),
@@ -331,6 +332,41 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     await ctx.reply("Delete cancelled. Nothing was changed.");
   });
 
+  bot.command("sync_failed", async (ctx) => {
+    const activities = (await plannedActivities.listAll()).filter(
+      (activity) => activity.syncStatus === "sync_failed",
+    );
+
+    await replyWithActivitySummary(ctx, "Failed calendar syncs", activities, config.timezone, {
+      showRetryButtons: true,
+    });
+  });
+
+  bot.callbackQuery(/^plan:retry-sync:(.+)$/, async (ctx) => {
+    const activity = await plannedActivities.findByShortId(ctx.match[1]);
+
+    await ctx.answerCallbackQuery();
+
+    if (!activity || activity.syncStatus === "deleted") {
+      await ctx.reply("Could not find that active planned activity.");
+      return;
+    }
+
+    if (activity.syncStatus !== "sync_failed") {
+      await ctx.reply("This activity does not need calendar retry.");
+      return;
+    }
+
+    const synced = await syncActivityToCalendar({
+      activity,
+      calendar,
+      logger,
+      plannedActivities,
+    });
+
+    await ctx.reply(formatActivitySyncResult(synced, formatActivitySaved(synced)));
+  });
+
   bot.command("today", async (ctx) => {
     const now = DateTime.now().setZone(config.timezone);
     const activities = await plannedActivities.listBetween({
@@ -394,6 +430,7 @@ async function replyWithActivitySummary(
   title: string,
   activities: PlannedActivity[],
   timezone: string,
+  options: { showRetryButtons?: boolean } = {},
 ): Promise<void> {
   if (activities.length === 0) {
     await ctx.reply(`${title}: nothing planned yet.`);
@@ -403,6 +440,10 @@ async function replyWithActivitySummary(
   const keyboard = new InlineKeyboard();
 
   activities.forEach((activity, index) => {
+    if (options.showRetryButtons && activity.syncStatus === "sync_failed") {
+      keyboard.text(`Retry ${index + 1}`, `plan:retry-sync:${shortId(activity.id)}`).row();
+    }
+
     keyboard.text(`Delete ${index + 1}`, `plan:delete-request:${shortId(activity.id)}`).row();
   });
 
@@ -431,6 +472,8 @@ function formatActivitySummary(
       activity.category,
       "|",
       visibleTitle,
+      "|",
+      `sync: ${activity.syncStatus}`,
       "|",
       `id: ${shortId(activity.id)}`,
     ].join(" ");

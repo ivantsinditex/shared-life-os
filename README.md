@@ -15,7 +15,8 @@ This repository currently covers the T1-T4 foundation:
 - `/plan` command with confirmation buttons;
 - local conflict detection with suggested alternatives;
 - Google Calendar free/busy checks for manually-created calendar blocks;
-- Google Calendar gateway for event creation when credentials are configured.
+- Google Calendar gateway for event creation when credentials are configured;
+- retry flow for locally saved activities whose calendar sync failed.
 
 ## Setup
 
@@ -31,6 +32,7 @@ npm run dev
 /health
 /today
 /week
+/sync_failed
 /plan Title | participant | category | YYYY-MM-DD HH:mm | duration_minutes | privacy
 /update short_id | Title | participant | category | YYYY-MM-DD HH:mm | duration_minutes | privacy
 ```
@@ -41,7 +43,7 @@ Example:
 /plan Workout | vania | sport | 2026-06-01 08:00 | 60 | busy_only
 ```
 
-Use `/today` or `/week` to see short ids and delete buttons. To update an activity, copy its short id and send:
+Use `/today` or `/week` to see short ids and delete buttons. Use `/sync_failed` to retry records that were saved locally but did not sync to Google Calendar. To update an activity, copy its short id and send:
 
 ```text
 /update ab12cd34 | Yoga | vania | sport | 2026-06-01 19:00 | 60 | busy_only
@@ -68,5 +70,5 @@ That calendar must be shared with the service account email using **Make changes
 ## Next Implementation Slice
 
 1. Richer guided Telegram planning flow with follow-up questions for missing fields.
-2. Calendar retry flow for records with failed sync.
-3. Voice command capture.
+2. Voice command capture.
+3. Monthly analytics foundation.
