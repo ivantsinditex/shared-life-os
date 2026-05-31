@@ -15,6 +15,7 @@ This repository currently covers the T1-T4 foundation:
 - `/plan` command with confirmation buttons;
 - local conflict detection with suggested alternatives;
 - Google Calendar gateway for event creation when credentials are configured.
+- hybrid calendar routing: Vania, Nastia, and shared activities can sync to different calendars.
 
 ## Setup
 
@@ -51,6 +52,16 @@ Core fields:
 - recurrence group, when generated from a repeated plan;
 - privacy: private, busy-only, or shared details;
 - sync status and Google Calendar event id.
+
+## Calendar Routing
+
+The bot routes events by participant:
+
+- `vania` -> `GOOGLE_CALENDAR_ID_VANIA`
+- `nastia` -> `GOOGLE_CALENDAR_ID_NASTIA`
+- `both` -> `GOOGLE_CALENDAR_ID_SHARED`
+
+Each target calendar must be shared with the service account email using **Make changes to events**.
 
 ## Next Implementation Slice
 
