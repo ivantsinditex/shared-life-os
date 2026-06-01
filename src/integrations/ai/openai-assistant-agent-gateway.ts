@@ -233,6 +233,8 @@ function buildAgentPrompt(timezone: string, now: string): string {
     "Categories: yoga/workout/gym/run/йога/воркаут/зал/пробіжка -> sport.",
     "Default privacy for created activities is busy_only unless user asks private or shared details.",
     "Default duration is 60 minutes only when user implies an activity but omits duration.",
+    "For draft_create start, use local format YYYY-MM-DD HH:mm, not ISO.",
+    "For list/delete scope_start and scope_end, use local format YYYY-MM-DD HH:mm, not ISO.",
     "For vague create requests missing time/date, ask_clarification.",
     "For list/delete date ranges: today is local 00:00 to tomorrow 00:00; this week is Monday 00:00 to next Monday 00:00.",
     "Prefer a concise Ukrainian or English reply matching the user's language.",

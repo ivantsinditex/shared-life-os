@@ -372,7 +372,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
       action.title,
       action.participant,
       action.category,
-      action.start,
+      formatLocalDateTimeForCommand(action.start, config.timezone),
       String(action.durationMinutes),
       action.privacy,
     ].join(" | ");
@@ -1286,13 +1286,33 @@ async function deleteActivities(params: {
 }
 
 function parseScopeDate(value: string, timezone: string): string {
-  const parsed = DateTime.fromFormat(value, "yyyy-MM-dd HH:mm", { zone: timezone });
+  const parsed = parseAiDateTime(value, timezone);
 
   if (!parsed.isValid) {
     throw new Error(`Could not understand AI scope date "${value}".`);
   }
 
   return toIso(parsed);
+}
+
+function formatLocalDateTimeForCommand(value: string, timezone: string): string {
+  const parsed = parseAiDateTime(value, timezone);
+
+  if (!parsed.isValid) {
+    return value;
+  }
+
+  return parsed.setZone(timezone).toFormat("yyyy-MM-dd HH:mm");
+}
+
+function parseAiDateTime(value: string, timezone: string): DateTime {
+  const formatted = DateTime.fromFormat(value, "yyyy-MM-dd HH:mm", { zone: timezone });
+
+  if (formatted.isValid) {
+    return formatted;
+  }
+
+  return DateTime.fromISO(value, { zone: timezone });
 }
 
 async function checkPlanConflicts(
