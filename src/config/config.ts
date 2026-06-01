@@ -1,5 +1,10 @@
 import { z } from "zod";
 
+const optionalTelegramUserId = z.preprocess(
+  (value) => (value === "" ? undefined : value),
+  z.coerce.number().optional(),
+);
+
 const configSchema = z.object({
   TELEGRAM_BOT_TOKEN: z.string().min(1, "TELEGRAM_BOT_TOKEN is required"),
   APP_TIMEZONE: z.string().default("Europe/Kiev"),
@@ -10,6 +15,8 @@ const configSchema = z.object({
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_TRANSCRIPTION_MODEL: z.string().default("gpt-4o-mini-transcribe"),
   OPENAI_PLANNING_MODEL: z.string().default("gpt-4o-mini"),
+  VANIA_TELEGRAM_USER_ID: optionalTelegramUserId,
+  NASTIA_TELEGRAM_USER_ID: optionalTelegramUserId,
 });
 
 export type AppConfig = {
@@ -48,10 +55,12 @@ export function loadConfig(): AppConfig {
       {
         key: "vania",
         displayName: "Vania",
+        telegramUserId: env.VANIA_TELEGRAM_USER_ID,
       },
       {
         key: "nastia",
         displayName: "Nastia",
+        telegramUserId: env.NASTIA_TELEGRAM_USER_ID,
       },
     ],
   };

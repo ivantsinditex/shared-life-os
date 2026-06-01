@@ -175,6 +175,17 @@ That calendar must be shared with the service account email using **Make changes
 
 Voice transcription and natural-language planning are optional and use OpenAI. Add `OPENAI_API_KEY` to `.env` to enable them.
 
+## Telegram Users
+
+Both Vania and Nastia can use the same bot. Each person should send `/whoami` to the bot, then add their Telegram ID to `.env`:
+
+```env
+VANIA_TELEGRAM_USER_ID=123
+NASTIA_TELEGRAM_USER_ID=456
+```
+
+After restart, phrases like `мені`, `мій`, `почала`, or `show my tasks` are resolved to the current Telegram user.
+
 ## Next Implementation Slice
 
 1. Monthly analytics foundation.

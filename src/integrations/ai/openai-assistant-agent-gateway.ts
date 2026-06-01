@@ -29,6 +29,7 @@ export type AssistantAgentInput = {
   recentActivities: PlannedActivity[];
   openTasks: WorkTask[];
   activeTimeEntry?: TimeEntry;
+  currentParticipant?: AgentParticipant;
 };
 
 export type AssistantAgentResult = {
@@ -262,7 +263,7 @@ class OpenAiAssistantAgentGateway implements AssistantAgentGateway {
         input: [
           {
             role: "system",
-            content: buildAgentPrompt(input.timezone, input.now),
+            content: buildAgentPrompt(input.timezone, input.now, input.currentParticipant),
           },
           {
             role: "user",
@@ -271,6 +272,7 @@ class OpenAiAssistantAgentGateway implements AssistantAgentGateway {
               recent_activities: input.recentActivities.map(toRecentActivityContext),
               open_tasks: input.openTasks.map(toOpenTaskContext),
               active_time_entry: input.activeTimeEntry ? toActiveTimeEntryContext(input.activeTimeEntry) : null,
+              current_participant: input.currentParticipant ?? "",
             }),
           },
         ],
@@ -301,7 +303,7 @@ class OpenAiAssistantAgentGateway implements AssistantAgentGateway {
   }
 }
 
-function buildAgentPrompt(timezone: string, now: string): string {
+function buildAgentPrompt(timezone: string, now: string, currentParticipant?: AgentParticipant): string {
   return [
     "You are a conversational life-planning assistant inside Telegram.",
     "You receive user text and activity context from recent conversation plus nearby calendar events. Decide what the user wants and return JSON actions.",
@@ -312,7 +314,10 @@ function buildAgentPrompt(timezone: string, now: string): string {
     "Use recent_activities to resolve phrases like this, that, it, last one, this workout, Wednesday operational work, це, це тренування, останнє, у середу операційна робота.",
     "When the user describes an existing activity by day/date/title/participant and exactly one recent_activities item matches, use that exact activity id.",
     "If a matching activity exists in recent_activities, do not ask to create a new activity.",
-    "Participants: me/my/мені/мене/мій/мого/Ivan/Vania/Vanya -> vania; Настя/Nastia -> nastia; together/us/разом -> both.",
+    currentParticipant
+      ? `Current Telegram user participant is ${currentParticipant}. Pronouns like me/my/мені/мене/мій/моя/почав/почала should map to ${currentParticipant}.`
+      : "Current Telegram user participant is unknown. If user says me/my/мені/мене without a name, ask a clarification.",
+    "Explicit participants: Ivan/Vania/Vanya/Ваня/Іван -> vania; Настя/Nastia -> nastia; together/us/разом/нам -> both.",
     "Categories: yoga/workout/gym/run/йога/воркаут/зал/пробіжка -> sport.",
     "Default privacy for created activities is busy_only unless user asks private or shared details.",
     "Default duration is 60 minutes only when user implies an activity but omits duration.",

@@ -43,6 +43,7 @@ import type { VoiceTranscriptionGateway } from "../voice/openai-transcription-ga
 import {
   activityCategories,
   participants,
+  type Participant,
   privacyLevels,
   type NewPlannedActivity,
   type PlannedActivity,
@@ -109,6 +110,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
         "/update - update a planned activity",
         "/sync_failed - show activities that need calendar retry",
         "/resync_calendar - refresh calendar titles and descriptions",
+        "/whoami - show your Telegram identity mapping",
         "/today - show today's planned activities",
         "/week - show this week's planned activities",
         "/task_add - add a task to a basket",
@@ -135,6 +137,20 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     });
 
     await ctx.reply("OK. Planning service is running.");
+  });
+
+  bot.command("whoami", async (ctx) => {
+    const participant = getCurrentParticipant(ctx, config);
+
+    await ctx.reply(
+      [
+        `Telegram ID: ${ctx.from?.id ?? "невідомо"}`,
+        `Ім'я: ${ctx.from?.first_name ?? "невідомо"}`,
+        `Учасник Shared Life OS: ${participant ?? "не налаштовано"}`,
+        "",
+        "Щоб підключити Настю, додай її Telegram ID у .env як NASTIA_TELEGRAM_USER_ID і перезапусти бота.",
+      ].join("\n"),
+    );
   });
 
   const handlePlanInput = async (ctx: Context, input: string): Promise<void> => {
@@ -303,7 +319,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     }
 
     const parsed = await planningTextParser.parse({
-      text,
+      text: withParticipantHint(text, getCurrentParticipant(ctx, config)),
       timezone: config.timezone,
       now: DateTime.now().setZone(config.timezone).toFormat("yyyy-MM-dd HH:mm"),
     });
@@ -353,6 +369,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
       recentActivities: contextActivities,
       openTasks: await loadAgentContextTasks(ctx),
       activeTimeEntry: await timeEntries.getActive(),
+      currentParticipant: getCurrentParticipant(ctx, config),
     });
 
     if (result.reply) {
@@ -1116,6 +1133,24 @@ type PendingClarification = {
 
 function userContextKey(ctx: Context): string {
   return String(ctx.from?.id ?? ctx.chat?.id ?? "unknown");
+}
+
+function getCurrentParticipant(ctx: Context, config: AppConfig): Participant | undefined {
+  const telegramUserId = ctx.from?.id;
+
+  if (!telegramUserId) {
+    return undefined;
+  }
+
+  return config.users.find((user) => user.telegramUserId === telegramUserId)?.key;
+}
+
+function withParticipantHint(text: string, participant: Participant | undefined): string {
+  if (!participant) {
+    return text;
+  }
+
+  return `[current participant: ${participant}]\n${text}`;
 }
 
 function looksLikeDeleteRequest(text: string): boolean {
