@@ -37,12 +37,17 @@ npm run dev
 /sync_failed
 /plan Title | participant | category | YYYY-MM-DD HH:mm | duration_minutes | privacy
 /update short_id | Title | participant | category | YYYY-MM-DD HH:mm | duration_minutes | privacy
+/task_add Title | basket | participant
+/tasks [basket]
+/task_move short_id | basket
+/task_close short_id
 ```
 
 Example:
 
 ```text
 /plan Workout | vania | sport | 2026-06-01 08:00 | 60 | busy_only
+/task_add Reply to urgent client | 911 | vania
 ```
 
 Use `/today` or `/week` to see short ids and delete buttons. Use `/sync_failed` to retry records that were saved locally but did not sync to Google Calendar. To update an activity, copy its short id and send:
@@ -64,6 +69,28 @@ Show my events today
 Delete all events today
 Delete everything today except one workout
 Delete all events today except Nastia yoga and my workout at 18:00
+```
+
+## Task Baskets
+
+Task baskets are the lightweight work queue layer for things that may later be tracked with actual time.
+
+Available baskets:
+
+- `911`
+- `operational`
+- `deep_work`
+- `random`
+- `personal_brand`
+- `other`
+
+Examples:
+
+```text
+/task_add Reply to urgent client | 911 | vania
+/tasks 911
+/task_move ab12cd34 | deep_work
+/task_close ab12cd34
 ```
 
 ## Planned Activity Concept
@@ -90,6 +117,6 @@ Voice transcription and natural-language planning are optional and use OpenAI. A
 
 ## Next Implementation Slice
 
-1. Richer guided Telegram planning flow with follow-up questions for missing fields.
-2. Natural-language parsing for text messages, not only voice.
+1. Natural-language and voice control for task baskets.
+2. Time tracking sessions linked to tasks and baskets.
 3. Monthly analytics foundation.

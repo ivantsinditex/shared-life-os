@@ -5,8 +5,10 @@ import { createAssistantAgentGateway } from "../integrations/ai/openai-assistant
 import { createPlanningTextParserGateway } from "../integrations/ai/openai-planning-parser-gateway.js";
 import { createCalendarGateway } from "../integrations/calendar/google-calendar-gateway.js";
 import { createPlanningCommands } from "../integrations/telegram/planning-commands.js";
+import { createTaskCommands } from "../integrations/telegram/task-commands.js";
 import { createVoiceTranscriptionGateway } from "../integrations/voice/openai-transcription-gateway.js";
 import { FilePlannedActivityRepository } from "../storage/file-planned-activity-repository.js";
+import { FileWorkTaskRepository } from "../storage/file-work-task-repository.js";
 import { ConsoleLogger } from "../utils/logger.js";
 
 export type App = {
@@ -17,6 +19,7 @@ export function createApp(config: AppConfig): App {
   const logger = new ConsoleLogger();
   const bot = new Bot(config.telegramBotToken);
   const plannedActivities = new FilePlannedActivityRepository(config.dataDir);
+  const workTasks = new FileWorkTaskRepository(config.dataDir);
   const calendar = createCalendarGateway(config);
   const voiceTranscription = createVoiceTranscriptionGateway(config);
   const assistantAgent = createAssistantAgentGateway(config);
@@ -32,6 +35,10 @@ export function createApp(config: AppConfig): App {
     planningTextParser,
     voiceTranscription,
   });
+  createTaskCommands({
+    bot,
+    workTasks,
+  });
 
   return {
     async start() {
@@ -41,6 +48,7 @@ export function createApp(config: AppConfig): App {
       });
 
       await plannedActivities.init();
+      await workTasks.init();
       await bot.start();
     },
   };
