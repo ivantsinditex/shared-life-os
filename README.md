@@ -41,6 +41,11 @@ npm run dev
 /tasks [basket]
 /task_move short_id | basket
 /task_close short_id
+/time_start basket_or_task_id | title | participant
+/time_stop [participant]
+/time_status [participant]
+/time_today [participant]
+/time_week [participant]
 ```
 
 Example:
@@ -48,6 +53,7 @@ Example:
 ```text
 /plan Workout | vania | sport | 2026-06-01 08:00 | 60 | busy_only
 /task_add Reply to urgent client | 911 | vania
+/time_start deep_work | Architecture planning | vania
 ```
 
 Use `/today` or `/week` to see short ids and delete buttons. Use `/sync_failed` to retry records that were saved locally but did not sync to Google Calendar. To update an activity, copy its short id and send:
@@ -102,6 +108,21 @@ Move the client reply task to deep work
 Close the last 911 task
 ```
 
+## Time Tracking
+
+Time tracking records actual work sessions against a basket or an existing task.
+
+Examples:
+
+```text
+/time_start deep_work | Architecture planning | vania
+/time_start ab12cd34
+/time_status
+/time_stop
+/time_today
+/time_week vania
+```
+
 ## Planned Activity Concept
 
 A planned activity is the product source of truth for calendar planning. Google Calendar is the synchronized availability surface, not the only place where product meaning lives.
@@ -126,6 +147,5 @@ Voice transcription and natural-language planning are optional and use OpenAI. A
 
 ## Next Implementation Slice
 
-1. Natural-language and voice control for task baskets.
-2. Time tracking sessions linked to tasks and baskets.
-3. Monthly analytics foundation.
+1. Natural-language and voice control for time tracking.
+2. Monthly analytics foundation.

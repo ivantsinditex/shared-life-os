@@ -128,7 +128,7 @@ export function parseTaskBasket(input: string): TaskBasket | undefined {
   return aliases[normalized] ?? taskBaskets.find((basket) => basket === normalized);
 }
 
-function parseParticipant(input: string): Participant | undefined {
+export function parseParticipant(input: string): Participant | undefined {
   const normalized = input.trim().toLowerCase();
   const aliases: Record<string, Participant> = {
     vania: "vania",

@@ -6,8 +6,10 @@ import { createPlanningTextParserGateway } from "../integrations/ai/openai-plann
 import { createCalendarGateway } from "../integrations/calendar/google-calendar-gateway.js";
 import { createPlanningCommands } from "../integrations/telegram/planning-commands.js";
 import { createTaskCommands } from "../integrations/telegram/task-commands.js";
+import { createTimeCommands } from "../integrations/telegram/time-commands.js";
 import { createVoiceTranscriptionGateway } from "../integrations/voice/openai-transcription-gateway.js";
 import { FilePlannedActivityRepository } from "../storage/file-planned-activity-repository.js";
+import { FileTimeEntryRepository } from "../storage/file-time-entry-repository.js";
 import { FileWorkTaskRepository } from "../storage/file-work-task-repository.js";
 import { ConsoleLogger } from "../utils/logger.js";
 
@@ -20,6 +22,7 @@ export function createApp(config: AppConfig): App {
   const bot = new Bot(config.telegramBotToken);
   const plannedActivities = new FilePlannedActivityRepository(config.dataDir);
   const workTasks = new FileWorkTaskRepository(config.dataDir);
+  const timeEntries = new FileTimeEntryRepository(config.dataDir);
   const calendar = createCalendarGateway(config);
   const voiceTranscription = createVoiceTranscriptionGateway(config);
   const assistantAgent = createAssistantAgentGateway(config);
@@ -40,6 +43,12 @@ export function createApp(config: AppConfig): App {
     bot,
     workTasks,
   });
+  createTimeCommands({
+    bot,
+    config,
+    timeEntries,
+    workTasks,
+  });
 
   return {
     async start() {
@@ -50,6 +59,7 @@ export function createApp(config: AppConfig): App {
 
       await plannedActivities.init();
       await workTasks.init();
+      await timeEntries.init();
       await bot.start();
     },
   };
