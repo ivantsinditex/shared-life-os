@@ -364,6 +364,11 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
 
     if (action.type === "draft_delete_recent") {
       await previewRecentDelete(ctx, action);
+      return;
+    }
+
+    if (action.type === "draft_update_recent") {
+      await previewRecentUpdate(ctx, action);
     }
   }
 
@@ -780,8 +785,60 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     await ctx.reply(["Delete this planned activity?", "", formatActivitySaved(activity)].join("\n"), {
       reply_markup: new InlineKeyboard()
         .text("Delete", `plan:delete-confirm:${token}`)
-        .text("Cancel", `plan:delete-cancel:${token}`),
+      .text("Cancel", `plan:delete-cancel:${token}`),
     });
+  }
+
+  async function previewRecentUpdate(
+    ctx: Context,
+    action: Extract<AssistantAgentAction, { type: "draft_update_recent" }>,
+  ): Promise<void> {
+    const existing = findRecentActivity(ctx, action.activityId, action.titleContains);
+
+    if (!existing || existing.syncStatus === "deleted") {
+      await ctx.reply("I could not find the recent activity you want to update. Try /today or describe it with date/time.");
+      return;
+    }
+
+    const updated = buildUpdatedActivityFromAgent(existing, action, config.timezone);
+    const conflictCheck = await checkPlanConflicts(
+      plannedActivities,
+      calendar,
+      updated,
+      existing.id,
+    );
+
+    if (conflictCheck.conflicts.length > 0) {
+      await ctx.reply(formatConflictWarning({ requested: updated, ...conflictCheck }));
+      return;
+    }
+
+    const token = randomUUID();
+    pendingUpdates.set(token, { existing, updated });
+    rememberActivities(ctx, [updated]);
+
+    await ctx.reply(["Update planned activity?", "", formatUpdatePreview(existing, updated)].join("\n"), {
+      reply_markup: new InlineKeyboard()
+        .text("Update", `plan:update:${token}`)
+        .text("Cancel", `plan:update-cancel:${token}`),
+    });
+  }
+
+  function findRecentActivity(
+    ctx: Context,
+    activityId?: string,
+    titleContains?: string,
+  ): PlannedActivity | undefined {
+    const candidates = recentActivitiesByUser.get(userContextKey(ctx)) ?? [];
+
+    if (activityId) {
+      return candidates.find((candidate) => candidate.id === activityId);
+    }
+
+    return candidates.find((candidate) =>
+      !titleContains ||
+      candidate.title.toLowerCase().includes(titleContains.toLowerCase()),
+    );
   }
 }
 
@@ -900,6 +957,31 @@ function hoursSinceUpdate(activity: PlannedActivity): number {
 
 function normalizeText(value: string): string {
   return value.toLowerCase().replace(/ё/g, "е").replace(/і/g, "и").replace(/ї/g, "и");
+}
+
+function buildUpdatedActivityFromAgent(
+  existing: PlannedActivity,
+  action: Extract<AssistantAgentAction, { type: "draft_update_recent" }>,
+  timezone: string,
+): PlannedActivity {
+  const startsAt = action.start
+    ? parseAiDateTime(action.start, timezone)
+    : DateTime.fromISO(existing.startsAt).setZone(timezone);
+  const durationMinutes = action.durationMinutes ?? Math.round(
+    DateTime.fromISO(existing.endsAt).diff(DateTime.fromISO(existing.startsAt), "minutes").minutes,
+  );
+  const endsAt = startsAt.plus({ minutes: durationMinutes });
+
+  return {
+    ...existing,
+    title: action.title ?? existing.title,
+    participant: action.participant ?? existing.participant,
+    category: action.category ?? existing.category,
+    startsAt: toIso(startsAt),
+    endsAt: toIso(endsAt),
+    privacy: action.privacy ?? existing.privacy,
+    isSharedActivity: (action.participant ?? existing.participant) === "both",
+  };
 }
 
 async function transcribeTelegramVoice(

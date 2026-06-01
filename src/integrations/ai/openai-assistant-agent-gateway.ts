@@ -61,6 +61,17 @@ export type AssistantAgentAction =
       titleContains?: string;
     }
   | {
+      type: "draft_update_recent";
+      activityId?: string;
+      titleContains?: string;
+      title?: string;
+      participant?: AgentParticipant;
+      category?: AgentCategory;
+      start?: string;
+      durationMinutes?: number;
+      privacy?: AgentPrivacy;
+    }
+  | {
       type: "ask_clarification";
       message: string;
     };
@@ -80,6 +91,7 @@ const agentResponseSchema = z.object({
         "list",
         "draft_delete_many",
         "draft_delete_recent",
+        "draft_update_recent",
         "ask_clarification",
       ]),
       message: z.string(),
@@ -228,6 +240,8 @@ function buildAgentPrompt(timezone: string, now: string): string {
     "You receive user text and recent activity context. Decide what the user wants and return JSON actions.",
     `Timezone: ${timezone}. Current local datetime: ${now}.`,
     "Act like a helpful assistant, but never directly perform destructive actions. For deletes, return draft_delete_recent or draft_delete_many so the app can ask for confirmation.",
+    "For edits to existing activities, return draft_update_recent. Do not model an update as delete plus create.",
+    "For phrases like replace Nastia with Vania, change participant from Nastia to Vania, заміни Настю на Ваню, use draft_update_recent with participant vania and the recent activity id.",
     "Use recent_activities to resolve phrases like this, that, it, last one, this workout, це, це тренування, останнє.",
     "Participants: me/my/мені/мене/мій/мого/Ivan/Vania/Vanya -> vania; Настя/Nastia -> nastia; together/us/разом -> both.",
     "Categories: yoga/workout/gym/run/йога/воркаут/зал/пробіжка -> sport.",
@@ -345,6 +359,20 @@ function toAgentAction(action: z.infer<typeof agentResponseSchema>["actions"][nu
     };
   }
 
+  if (action.type === "draft_update_recent") {
+    return {
+      type: "draft_update_recent",
+      activityId: emptyToUndefined(action.activity_id),
+      titleContains: emptyToUndefined(action.title_contains),
+      title: emptyToUndefined(action.title),
+      participant: emptyToUndefined(action.participant) as AgentParticipant | undefined,
+      category: emptyToUndefined(action.category) as AgentCategory | undefined,
+      start: emptyToUndefined(action.start),
+      durationMinutes: action.duration_minutes > 0 ? action.duration_minutes : undefined,
+      privacy: emptyToUndefined(action.privacy) as AgentPrivacy | undefined,
+    };
+  }
+
   return undefined;
 }
 
@@ -404,6 +432,7 @@ const agentPlanSchema = {
               "list",
               "draft_delete_many",
               "draft_delete_recent",
+              "draft_update_recent",
               "ask_clarification",
             ],
           },

@@ -56,6 +56,7 @@ They can also use natural language, for example: `Plan workout for Vania tomorro
 If the bot is missing participant, category, or privacy, it will keep a draft and ask a follow-up question with buttons.
 The bot also keeps a short per-user conversation context, so follow-up phrases like `delete this one` or `remove the last workout today` can refer to recently created or listed activities.
 Natural-language routing now uses an assistant agent first: the model sees recent activity context and chooses guarded app actions like draft create, list, or delete preview before the older parser fallback runs.
+The assistant can also draft updates to recent activities, such as changing participant, time, category, title, duration, or privacy, and then asks for confirmation.
 Natural-language voice also supports safe previews for list and bulk delete requests, for example:
 
 ```text
