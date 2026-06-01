@@ -35,6 +35,7 @@ npm run dev
 /today
 /week
 /sync_failed
+/resync_calendar
 /plan Title | participant | category | YYYY-MM-DD HH:mm | duration_minutes | privacy
 /update short_id | Title | participant | category | YYYY-MM-DD HH:mm | duration_minutes | privacy
 /task_add Title | basket | participant

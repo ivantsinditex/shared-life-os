@@ -25,7 +25,7 @@ describe("privacy rendering", () => {
         participant: "nastia",
         privacy: "private",
       }),
-    ).toBe("Nastia busy");
+    ).toBe("Настя зайнята");
   });
 
   it("keeps shared details visible", () => {
@@ -53,7 +53,7 @@ describe("privacy rendering", () => {
     );
 
     expect(description).toContain("Deep private focus");
-    expect(description).toContain("Privacy: busy_only");
+    expect(description).toContain("Приватність: показувати тільки зайнятість");
   });
 
   it("does not leak internal details in private descriptions", () => {
@@ -65,7 +65,7 @@ describe("privacy rendering", () => {
     );
 
     expect(description).not.toContain("Deep private focus");
-    expect(description).toContain("Details are private in the bot.");
+    expect(description).toContain("Деталі приватні та доступні тільки в боті.");
   });
 
   it("keeps details in shared event descriptions", () => {
@@ -77,7 +77,7 @@ describe("privacy rendering", () => {
     );
 
     expect(description).toContain("Together dinner");
-    expect(description).toContain("Category: work");
+    expect(description).toContain("Категорія: робота");
   });
 });
 

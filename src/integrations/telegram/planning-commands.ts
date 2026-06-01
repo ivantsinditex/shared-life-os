@@ -9,7 +9,10 @@ import {
   formatActivityDeleted,
   formatActivitySaved,
   formatActivityUpdated,
+  formatCategory,
   formatConflictWarning,
+  formatParticipant,
+  formatSyncStatus,
 } from "../../domain/planned-activity-formatting.js";
 import { findConflicts } from "../../domain/conflict-detection.js";
 import {
@@ -105,6 +108,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
         "/plan - create a planned activity",
         "/update - update a planned activity",
         "/sync_failed - show activities that need calendar retry",
+        "/resync_calendar - refresh calendar titles and descriptions",
         "/today - show today's planned activities",
         "/week - show this week's planned activities",
         "/task_add - add a task to a basket",
@@ -155,9 +159,9 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
       await ctx.reply(formatConflictWarning({ requested: parsed.activity, ...conflictCheck }), {
         reply_markup: conflictCheck.alternatives.reduce(
           (keyboard, alternative, index) =>
-            keyboard.text(`Use option ${index + 1}`, `plan:alternative:${token}:${index}`).row(),
+            keyboard.text(`Варіант ${index + 1}`, `plan:alternative:${token}:${index}`).row(),
           new InlineKeyboard(),
-        ).text("Cancel", `plan:cancel:${token}`),
+        ).text("Скасувати", `plan:cancel:${token}`),
       });
       return;
     }
@@ -167,8 +171,8 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
 
     await ctx.reply(formatActivityConfirmation(parsed.activity), {
       reply_markup: new InlineKeyboard()
-        .text("Create", `plan:create:${token}`)
-        .text("Cancel", `plan:cancel:${token}`),
+        .text("Створити", `plan:create:${token}`)
+        .text("Скасувати", `plan:cancel:${token}`),
     });
   };
 
@@ -188,7 +192,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     const existing = await plannedActivities.findByShortId(parsed.shortId);
 
     if (!existing || existing.syncStatus === "deleted") {
-      await ctx.reply(`Could not find one active planned activity for id "${parsed.shortId}".`);
+      await ctx.reply(`Не знайшов активну заплановану активність з id "${parsed.shortId}".`);
       return;
     }
 
@@ -215,10 +219,10 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     const token = randomUUID();
     pendingUpdates.set(token, { existing, updated });
 
-    await ctx.reply(["Update planned activity?", "", formatUpdatePreview(existing, updated)].join("\n"), {
+    await ctx.reply(["Оновити заплановану активність?", "", formatUpdatePreview(existing, updated)].join("\n"), {
       reply_markup: new InlineKeyboard()
-        .text("Update", `plan:update:${token}`)
-        .text("Cancel", `plan:update-cancel:${token}`),
+        .text("Оновити", `plan:update:${token}`)
+        .text("Скасувати", `plan:update-cancel:${token}`),
     });
   };
 
@@ -318,7 +322,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
       const activities = await listActivitiesByScope(plannedActivities, parsed.scope, config.timezone);
 
       rememberActivities(ctx, activities);
-      await replyWithActivitySummary(ctx, "AI list result", activities, config.timezone);
+      await replyWithActivitySummary(ctx, "Результат AI-пошуку", activities, config.timezone);
       return;
     }
 
@@ -422,7 +426,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
       const activities = await listActivitiesByScope(plannedActivities, action.scope, config.timezone);
 
       rememberActivities(ctx, activities);
-      await replyWithActivitySummary(ctx, "Assistant list result", activities, config.timezone);
+      await replyWithActivitySummary(ctx, "Результат пошуку асистента", activities, config.timezone);
       return;
     }
 
@@ -579,14 +583,14 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     await ctx.answerCallbackQuery();
 
     if (!activity) {
-      await ctx.reply("This planning confirmation expired. Please send /plan again.");
+      await ctx.reply("Підтвердження створення застаріло. Надішли /plan ще раз.");
       return;
     }
 
     const conflictCheck = await checkPlanConflicts(plannedActivities, calendar, activity);
 
     if (conflictCheck.conflicts.length > 0) {
-      await ctx.reply("This plan now conflicts with another activity. Please send /plan again.");
+      await ctx.reply("Цей план уже конфліктує з іншою активністю. Надішли /plan ще раз.");
       pendingPlans.delete(token);
       return;
     }
@@ -607,7 +611,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
   bot.callbackQuery(/^plan:cancel:(.+)$/, async (ctx) => {
     pendingPlans.delete(ctx.match[1]);
     await ctx.answerCallbackQuery();
-    await ctx.reply("Planning cancelled. Nothing was saved.");
+    await ctx.reply("Планування скасовано. Нічого не збережено.");
   });
 
   bot.callbackQuery(/^plan:alternative:(.+):(\d+)$/, async (ctx) => {
@@ -618,7 +622,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     await ctx.answerCallbackQuery();
 
     if (!activity) {
-      await ctx.reply("This planning confirmation expired. Please send /plan again.");
+      await ctx.reply("Підтвердження створення застаріло. Надішли /plan ще раз.");
       return;
     }
 
@@ -626,7 +630,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     const alternative = conflictCheck.alternatives[index];
 
     if (!alternative) {
-      await ctx.reply("That alternative is no longer available. Please send /plan again.");
+      await ctx.reply("Цей варіант уже недоступний. Надішли /plan ще раз.");
       pendingPlans.delete(token);
       return;
     }
@@ -641,8 +645,8 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
 
     await ctx.reply(formatActivityConfirmation(updatedActivity), {
       reply_markup: new InlineKeyboard()
-        .text("Create", `plan:create:${token}`)
-        .text("Cancel", `plan:cancel:${token}`),
+        .text("Створити", `plan:create:${token}`)
+        .text("Скасувати", `plan:cancel:${token}`),
     });
   });
 
@@ -657,7 +661,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     await ctx.answerCallbackQuery();
 
     if (!pending) {
-      await ctx.reply("This update confirmation expired. Please send /update again.");
+      await ctx.reply("Підтвердження оновлення застаріло. Надішли /update ще раз.");
       return;
     }
 
@@ -677,7 +681,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
   bot.callbackQuery(/^plan:update-cancel:(.+)$/, async (ctx) => {
     pendingUpdates.delete(ctx.match[1]);
     await ctx.answerCallbackQuery();
-    await ctx.reply("Update cancelled. Nothing was changed.");
+    await ctx.reply("Оновлення скасовано. Нічого не змінено.");
   });
 
   bot.callbackQuery(/^plan:delete-request:(.+)$/, async (ctx) => {
@@ -686,17 +690,17 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     await ctx.answerCallbackQuery();
 
     if (!activity || activity.syncStatus === "deleted") {
-      await ctx.reply("Could not find that active planned activity.");
+      await ctx.reply("Не знайшов цю активну заплановану активність.");
       return;
     }
 
     const token = randomUUID();
     pendingDeletes.set(token, activity);
 
-    await ctx.reply(["Delete planned activity?", "", formatActivitySaved(activity)].join("\n"), {
+    await ctx.reply(["Видалити заплановану активність?", "", formatActivitySaved(activity)].join("\n"), {
       reply_markup: new InlineKeyboard()
-        .text("Delete", `plan:delete-confirm:${token}`)
-        .text("Cancel", `plan:delete-cancel:${token}`),
+        .text("Видалити", `plan:delete-confirm:${token}`)
+        .text("Скасувати", `plan:delete-cancel:${token}`),
     });
   });
 
@@ -707,7 +711,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     await ctx.answerCallbackQuery();
 
     if (!activity) {
-      await ctx.reply("This delete confirmation expired. Please choose the activity again.");
+      await ctx.reply("Підтвердження видалення застаріло. Обери активність ще раз.");
       return;
     }
 
@@ -737,7 +741,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
 
       await ctx.reply(
         [
-          "Calendar delete failed, so the activity was not marked deleted.",
+          "Не вдалося видалити подію з календаря, тому активність не позначена як видалена.",
           "",
           formatActivitySaved(failed),
         ].join("\n"),
@@ -748,7 +752,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
   bot.callbackQuery(/^plan:delete-cancel:(.+)$/, async (ctx) => {
     pendingDeletes.delete(ctx.match[1]);
     await ctx.answerCallbackQuery();
-    await ctx.reply("Delete cancelled. Nothing was changed.");
+    await ctx.reply("Видалення скасовано. Нічого не змінено.");
   });
 
   bot.callbackQuery(/^plan:delete-many-confirm:(.+)$/, async (ctx) => {
@@ -757,7 +761,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     await ctx.answerCallbackQuery();
 
     if (!pending) {
-      await ctx.reply("This bulk delete confirmation expired. Please send the request again.");
+      await ctx.reply("Підтвердження масового видалення застаріло. Надішли запит ще раз.");
       return;
     }
 
@@ -772,8 +776,8 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
 
     await ctx.reply(
       [
-        `Deleted ${result.deletedCount} planned activities.`,
-        result.failedCount > 0 ? `${result.failedCount} activities failed to delete and were marked sync_failed.` : "",
+        `Видалено запланованих активностей: ${result.deletedCount}.`,
+        result.failedCount > 0 ? `Не вдалося видалити: ${result.failedCount}; позначено як помилка синхронізації.` : "",
       ]
         .filter(Boolean)
         .join("\n"),
@@ -783,7 +787,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
   bot.callbackQuery(/^plan:delete-many-cancel:(.+)$/, async (ctx) => {
     pendingBulkDeletes.delete(ctx.match[1]);
     await ctx.answerCallbackQuery();
-    await ctx.reply("Bulk delete cancelled. Nothing was changed.");
+    await ctx.reply("Масове видалення скасовано. Нічого не змінено.");
   });
 
   bot.callbackQuery(/^plan:clarify:(.+):([^:]+):(.+)$/, async (ctx) => {
@@ -793,7 +797,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     await ctx.answerCallbackQuery();
 
     if (!pending || !isClarifiableField(field)) {
-      await ctx.reply("This clarification expired. Please send the request again.");
+      await ctx.reply("Уточнення застаріло. Надішли запит ще раз.");
       return;
     }
 
@@ -818,9 +822,40 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
       (activity) => activity.syncStatus === "sync_failed",
     );
 
-    await replyWithActivitySummary(ctx, "Failed calendar syncs", activities, config.timezone, {
+    await replyWithActivitySummary(ctx, "Помилки синхронізації календаря", activities, config.timezone, {
       showRetryButtons: true,
     });
+  });
+
+  bot.command("resync_calendar", async (ctx) => {
+    const activities = (await plannedActivities.listAll()).filter(
+      (activity) => activity.syncStatus !== "deleted",
+    );
+    let syncedCount = 0;
+    let failedCount = 0;
+
+    for (const activity of activities) {
+      const synced = await syncActivityToCalendar({
+        activity,
+        calendar,
+        logger,
+        plannedActivities,
+      });
+
+      if (synced.syncStatus === "synced") {
+        syncedCount += 1;
+      } else {
+        failedCount += 1;
+      }
+    }
+
+    await ctx.reply(
+      [
+        "Синхронізацію календаря завершено.",
+        `Оновлено: ${syncedCount}.`,
+        failedCount > 0 ? `Помилки: ${failedCount}.` : "",
+      ].filter(Boolean).join("\n"),
+    );
   });
 
   bot.callbackQuery(/^plan:retry-sync:(.+)$/, async (ctx) => {
@@ -829,12 +864,12 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     await ctx.answerCallbackQuery();
 
     if (!activity || activity.syncStatus === "deleted") {
-      await ctx.reply("Could not find that active planned activity.");
+      await ctx.reply("Не знайшов цю активну заплановану активність.");
       return;
     }
 
     if (activity.syncStatus !== "sync_failed") {
-      await ctx.reply("This activity does not need calendar retry.");
+      await ctx.reply("Ця активність не потребує повторної синхронізації.");
       return;
     }
 
@@ -856,7 +891,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     });
 
     rememberActivities(ctx, activities);
-    await replyWithActivitySummary(ctx, "Today", activities, config.timezone);
+    await replyWithActivitySummary(ctx, "Сьогодні", activities, config.timezone);
   });
 
   bot.command("week", async (ctx) => {
@@ -867,7 +902,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     });
 
     rememberActivities(ctx, activities);
-    await replyWithActivitySummary(ctx, "This week", activities, config.timezone);
+    await replyWithActivitySummary(ctx, "Цей тиждень", activities, config.timezone);
   });
 
   bot.on("message:text", async (ctx) => {
@@ -944,10 +979,10 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     const token = randomUUID();
     pendingDeletes.set(token, activity);
 
-    await ctx.reply(["Delete this planned activity?", "", formatActivitySaved(activity)].join("\n"), {
+    await ctx.reply(["Видалити цю заплановану активність?", "", formatActivitySaved(activity)].join("\n"), {
       reply_markup: new InlineKeyboard()
-        .text("Delete", `plan:delete-confirm:${token}`)
-        .text("Cancel", `plan:delete-cancel:${token}`),
+        .text("Видалити", `plan:delete-confirm:${token}`)
+        .text("Скасувати", `plan:delete-cancel:${token}`),
     });
     return true;
   }
@@ -966,7 +1001,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     }
 
     if (deletionPlan.deleteCandidates.length === 0) {
-      await ctx.reply("I found no matching activities to delete.");
+      await ctx.reply("Не знайшов активностей для видалення.");
       return;
     }
 
@@ -979,8 +1014,8 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
 
     await ctx.reply(formatBulkDeletePreview(deletionPlan, config.timezone), {
       reply_markup: new InlineKeyboard()
-        .text(`Delete ${deletionPlan.deleteCandidates.length}`, `plan:delete-many-confirm:${token}`)
-        .text("Cancel", `plan:delete-many-cancel:${token}`),
+        .text(`Видалити ${deletionPlan.deleteCandidates.length}`, `plan:delete-many-confirm:${token}`)
+        .text("Скасувати", `plan:delete-many-cancel:${token}`),
     });
   }
 
@@ -997,17 +1032,17 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
         );
 
     if (!activity || activity.syncStatus === "deleted") {
-      await ctx.reply("I could not find the recent activity you mean. Try /today or describe it with date/time.");
+      await ctx.reply("Не знайшов активність, яку ти маєш на увазі. Спробуй /today або опиши дату/час.");
       return;
     }
 
     const token = randomUUID();
     pendingDeletes.set(token, activity);
 
-    await ctx.reply(["Delete this planned activity?", "", formatActivitySaved(activity)].join("\n"), {
+    await ctx.reply(["Видалити цю заплановану активність?", "", formatActivitySaved(activity)].join("\n"), {
       reply_markup: new InlineKeyboard()
-        .text("Delete", `plan:delete-confirm:${token}`)
-      .text("Cancel", `plan:delete-cancel:${token}`),
+        .text("Видалити", `plan:delete-confirm:${token}`)
+      .text("Скасувати", `plan:delete-cancel:${token}`),
     });
   }
 
@@ -1018,7 +1053,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     const existing = findRecentActivity(ctx, action.activityId, action.titleContains);
 
     if (!existing || existing.syncStatus === "deleted") {
-      await ctx.reply("I could not find the recent activity you want to update. Try /today or describe it with date/time.");
+      await ctx.reply("Не знайшов активність, яку треба оновити. Спробуй /today або опиши дату/час.");
       return;
     }
 
@@ -1039,10 +1074,10 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     pendingUpdates.set(token, { existing, updated });
     rememberActivities(ctx, [updated]);
 
-    await ctx.reply(["Update planned activity?", "", formatUpdatePreview(existing, updated)].join("\n"), {
+    await ctx.reply(["Оновити заплановану активність?", "", formatUpdatePreview(existing, updated)].join("\n"), {
       reply_markup: new InlineKeyboard()
-        .text("Update", `plan:update:${token}`)
-        .text("Cancel", `plan:update-cancel:${token}`),
+        .text("Оновити", `plan:update:${token}`)
+        .text("Скасувати", `plan:update-cancel:${token}`),
     });
   }
 
@@ -1391,12 +1426,12 @@ function formatPlanningDraft(draft: ParsedPlanningDraft): string {
 
 function formatDraftPreview(draft: ParsedPlanningDraft): string {
   return [
-    `Title: ${draft.title ?? "?"}`,
-    `Participant: ${draft.participant ?? "?"}`,
-    `Category: ${draft.category ?? "?"}`,
-    `Start: ${draft.start ?? "?"}`,
-    `Duration: ${draft.durationMinutes ? `${draft.durationMinutes} min` : "?"}`,
-    `Privacy: ${draft.privacy ?? "?"}`,
+    `Назва: ${draft.title ?? "?"}`,
+    `Учасник: ${draft.participant ? formatParticipant(draft.participant) : "?"}`,
+    `Категорія: ${draft.category ? formatCategory(draft.category) : "?"}`,
+    `Початок: ${draft.start ?? "?"}`,
+    `Тривалість: ${draft.durationMinutes ? `${draft.durationMinutes} хв` : "?"}`,
+    `Приватність: ${draft.privacy ?? "?"}`,
   ].join("\n");
 }
 
@@ -1496,14 +1531,14 @@ function formatBulkDeletePreview(
   timezone: string,
 ): string {
   const lines = [
-    `Delete ${plan.deleteCandidates.length} planned activities?`,
+    `Видалити запланованих активностей: ${plan.deleteCandidates.length}?`,
   ];
 
   if (plan.keptActivities.length > 0) {
-    lines.push("", "Keeping:", ...formatActivityLines(plan.keptActivities, timezone));
+    lines.push("", "Залишаємо:", ...formatActivityLines(plan.keptActivities, timezone));
   }
 
-  lines.push("", "Deleting:", ...formatActivityLines(plan.deleteCandidates, timezone));
+  lines.push("", "Видаляємо:", ...formatActivityLines(plan.deleteCandidates, timezone));
 
   return lines.join("\n");
 }
@@ -1541,9 +1576,9 @@ function formatActivityLines(activities: PlannedActivity[], timezone: string): s
       "-",
       end.toFormat("HH:mm"),
       "|",
-      activity.participant,
+      formatParticipant(activity.participant),
       "|",
-      activity.category,
+      formatCategory(activity.category),
       "|",
       renderCalendarTitle(activity),
       "|",
@@ -1659,7 +1694,7 @@ async function replyWithActivitySummary(
   options: { showRetryButtons?: boolean } = {},
 ): Promise<void> {
   if (activities.length === 0) {
-    await ctx.reply(`${title}: nothing planned yet.`);
+    await ctx.reply(`${title}: поки нічого не заплановано.`);
     return;
   }
 
@@ -1667,10 +1702,10 @@ async function replyWithActivitySummary(
 
   activities.forEach((activity, index) => {
     if (options.showRetryButtons && activity.syncStatus === "sync_failed") {
-      keyboard.text(`Retry ${index + 1}`, `plan:retry-sync:${shortId(activity.id)}`).row();
+      keyboard.text(`Повторити ${index + 1}`, `plan:retry-sync:${shortId(activity.id)}`).row();
     }
 
-    keyboard.text(`Delete ${index + 1}`, `plan:delete-request:${shortId(activity.id)}`).row();
+    keyboard.text(`Видалити ${index + 1}`, `plan:delete-request:${shortId(activity.id)}`).row();
   });
 
   await ctx.reply(formatActivitySummary(title, activities, timezone), {
@@ -1688,17 +1723,17 @@ function formatActivitySummary(
     const end = DateTime.fromISO(activity.endsAt).setZone(timezone);
 
     return [
-      start.toFormat("ccc HH:mm"),
+      start.setLocale("uk").toFormat("ccc HH:mm"),
       "-",
       end.toFormat("HH:mm"),
       "|",
-      activity.participant,
+      formatParticipant(activity.participant),
       "|",
-      activity.category,
+      formatCategory(activity.category),
       "|",
       renderCalendarTitle(activity),
       "|",
-      `sync: ${activity.syncStatus}`,
+      `синхронізація: ${formatSyncStatus(activity.syncStatus)}`,
       "|",
       `id: ${shortId(activity.id)}`,
     ].join(" ");
@@ -1753,17 +1788,17 @@ function formatActivitySyncResult(activity: PlannedActivity, successMessage: str
   return [
     successMessage,
     "",
-    "Saved locally, but calendar sync failed.",
-    "Check Google Calendar credentials and retry sync in a later task.",
+    "Збережено локально, але синхронізація з календарем не вдалася.",
+    "Перевір доступи Google Calendar і повтори синхронізацію пізніше.",
   ].join("\n");
 }
 
 function formatUpdatePreview(existing: PlannedActivity, updated: PlannedActivity): string {
   return [
-    "From:",
+    "Було:",
     formatActivitySaved(existing),
     "",
-    "To:",
+    "Стане:",
     formatActivitySaved(updated),
   ].join("\n");
 }

@@ -2,48 +2,48 @@ import { DateTime } from "luxon";
 
 import type { TimeSlot } from "./conflict-detection.js";
 import { renderCalendarTitle } from "./privacy-rendering.js";
-import type { NewPlannedActivity, PlannedActivity } from "./planned-activity.js";
+import type { ActivityCategory, NewPlannedActivity, Participant, PlannedActivity, PrivacyLevel } from "./planned-activity.js";
 
 export function formatActivityConfirmation(activity: NewPlannedActivity): string {
   return [
-    "Create planned activity?",
+    "Створити заплановану активність?",
     "",
-    `Title: ${activity.title}`,
-    `Participant: ${activity.participant}`,
-    `Category: ${activity.category}`,
-    `Time: ${formatRange(activity.startsAt, activity.endsAt, activity.timezone)}`,
-    `Privacy: ${activity.privacy}`,
-    `Calendar title: ${renderCalendarTitle(activity)}`,
+    `Назва: ${activity.title}`,
+    `Учасник: ${formatParticipant(activity.participant)}`,
+    `Категорія: ${formatCategory(activity.category)}`,
+    `Час: ${formatRange(activity.startsAt, activity.endsAt, activity.timezone)}`,
+    `Приватність: ${formatPrivacy(activity.privacy)}`,
+    `Назва в календарі: ${renderCalendarTitle(activity)}`,
   ].join("\n");
 }
 
 export function formatActivitySaved(activity: PlannedActivity): string {
   return [
-    "Planned activity saved.",
+    "Заплановану активність збережено.",
     "",
     `${activity.title}`,
     `${formatRange(activity.startsAt, activity.endsAt, activity.timezone)}`,
-    `Participant: ${activity.participant}`,
-    `Category: ${activity.category}`,
-    `Calendar sync: ${activity.syncStatus}`,
+    `Учасник: ${formatParticipant(activity.participant)}`,
+    `Категорія: ${formatCategory(activity.category)}`,
+    `Синхронізація календаря: ${formatSyncStatus(activity.syncStatus)}`,
   ].join("\n");
 }
 
 export function formatActivityUpdated(activity: PlannedActivity): string {
   return [
-    "Planned activity updated.",
+    "Заплановану активність оновлено.",
     "",
     `${activity.title}`,
     `${formatRange(activity.startsAt, activity.endsAt, activity.timezone)}`,
-    `Participant: ${activity.participant}`,
-    `Category: ${activity.category}`,
-    `Calendar sync: ${activity.syncStatus}`,
+    `Учасник: ${formatParticipant(activity.participant)}`,
+    `Категорія: ${formatCategory(activity.category)}`,
+    `Синхронізація календаря: ${formatSyncStatus(activity.syncStatus)}`,
   ].join("\n");
 }
 
 export function formatActivityDeleted(activity: PlannedActivity): string {
   return [
-    "Planned activity deleted.",
+    "Заплановану активність видалено.",
     "",
     `${activity.title}`,
     `${formatRange(activity.startsAt, activity.endsAt, activity.timezone)}`,
@@ -56,22 +56,22 @@ export function formatConflictWarning(params: {
   alternatives: TimeSlot[];
 }): string {
   const conflicts = params.conflicts.map((activity) =>
-    `- ${formatRange(activity.startsAt, activity.endsAt, activity.timezone)} | ${activity.participant} | ${activity.category} | ${renderCalendarTitle(activity)}`,
+    `- ${formatRange(activity.startsAt, activity.endsAt, activity.timezone)} | ${formatParticipant(activity.participant)} | ${formatCategory(activity.category)} | ${renderCalendarTitle(activity)}`,
   );
   const alternatives = params.alternatives.map(
     (slot, index) => `${index + 1}. ${formatRange(slot.startsAt, slot.endsAt, params.requested.timezone)}`,
   );
 
   return [
-    "This time conflicts with existing plans.",
+    "Цей час конфліктує з уже запланованими активностями.",
     "",
-    "Requested:",
+    "Запит:",
     formatRange(params.requested.startsAt, params.requested.endsAt, params.requested.timezone),
     "",
-    "Conflicts:",
+    "Конфлікти:",
     ...conflicts,
     "",
-    "Suggested alternatives:",
+    "Запропоновані альтернативи:",
     ...alternatives,
   ].join("\n");
 }
@@ -80,5 +80,53 @@ export function formatRange(startsAt: string, endsAt: string, timezone: string):
   const start = DateTime.fromISO(startsAt).setZone(timezone);
   const end = DateTime.fromISO(endsAt).setZone(timezone);
 
-  return `${start.toFormat("ccc yyyy-LL-dd HH:mm")} - ${end.toFormat("HH:mm")}`;
+  return `${start.setLocale("uk").toFormat("ccc yyyy-LL-dd HH:mm")} - ${end.toFormat("HH:mm")}`;
+}
+
+export function formatParticipant(participant: Participant): string {
+  const labels: Record<Participant, string> = {
+    vania: "Ваня",
+    nastia: "Настя",
+    both: "Разом",
+  };
+
+  return labels[participant];
+}
+
+export function formatCategory(category: ActivityCategory): string {
+  const labels: Record<ActivityCategory, string> = {
+    sport: "спорт",
+    work: "робота",
+    learning: "навчання",
+    reading: "читання",
+    dogs: "собаки",
+    horse: "кінь",
+    care: "догляд",
+    together: "час разом",
+    other: "інше",
+  };
+
+  return labels[category];
+}
+
+export function formatPrivacy(privacy: PrivacyLevel): string {
+  const labels: Record<PrivacyLevel, string> = {
+    private: "приватно",
+    busy_only: "показувати тільки зайнятість",
+    shared_details: "показувати деталі",
+  };
+
+  return labels[privacy];
+}
+
+export function formatSyncStatus(status: PlannedActivity["syncStatus"]): string {
+  const labels: Record<PlannedActivity["syncStatus"], string> = {
+    pending: "очікує",
+    synced: "синхронізовано",
+    sync_failed: "помилка синхронізації",
+    externally_changed: "змінено зовні",
+    deleted: "видалено",
+  };
+
+  return labels[status];
 }

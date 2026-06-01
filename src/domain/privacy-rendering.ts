@@ -5,7 +5,11 @@ export function renderCalendarTitle(activity: Pick<PlannedActivity, "title" | "p
     return activity.title;
   }
 
-  return activity.participant === "both" ? "Busy" : `${capitalize(activity.participant)} busy`;
+  if (activity.participant === "both") {
+    return "Зайнято";
+  }
+
+  return activity.participant === "nastia" ? "Настя зайнята" : "Ваня зайнятий";
 }
 
 export function toGoogleVisibility(privacy: PrivacyLevel): "default" | "private" {
@@ -15,20 +19,52 @@ export function toGoogleVisibility(privacy: PrivacyLevel): "default" | "private"
 export function renderCalendarDescription(activity: PlannedActivity): string {
   if (activity.privacy === "private") {
     return [
-      "Created by Shared Life OS.",
-      "Details are private in the bot.",
+      "Створено через Shared Life OS.",
+      "Деталі приватні та доступні тільки в боті.",
     ].join("\n");
   }
 
   return [
-    "Created by Shared Life OS.",
-    `Internal title: ${activity.title}`,
-    `Participant: ${activity.participant}`,
-    `Category: ${activity.category}`,
-    `Privacy: ${activity.privacy}`,
+    "Створено через Shared Life OS.",
+    `Внутрішня назва: ${activity.title}`,
+    `Учасник: ${formatParticipant(activity.participant)}`,
+    `Категорія: ${formatCategory(activity.category)}`,
+    `Приватність: ${formatPrivacy(activity.privacy)}`,
   ].join("\n");
 }
 
-function capitalize(value: string): string {
-  return value.charAt(0).toUpperCase() + value.slice(1);
+function formatParticipant(participant: PlannedActivity["participant"]): string {
+  const labels: Record<PlannedActivity["participant"], string> = {
+    vania: "Ваня",
+    nastia: "Настя",
+    both: "Разом",
+  };
+
+  return labels[participant];
+}
+
+function formatCategory(category: PlannedActivity["category"]): string {
+  const labels: Record<PlannedActivity["category"], string> = {
+    sport: "спорт",
+    work: "робота",
+    learning: "навчання",
+    reading: "читання",
+    dogs: "собаки",
+    horse: "кінь",
+    care: "догляд",
+    together: "час разом",
+    other: "інше",
+  };
+
+  return labels[category];
+}
+
+function formatPrivacy(privacy: PlannedActivity["privacy"]): string {
+  const labels: Record<PlannedActivity["privacy"], string> = {
+    private: "приватно",
+    busy_only: "показувати тільки зайнятість",
+    shared_details: "показувати деталі",
+  };
+
+  return labels[privacy];
 }
