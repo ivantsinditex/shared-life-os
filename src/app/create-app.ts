@@ -4,6 +4,7 @@ import type { AppConfig } from "../config/config.js";
 import { createAssistantAgentGateway } from "../integrations/ai/openai-assistant-agent-gateway.js";
 import { createPlanningTextParserGateway } from "../integrations/ai/openai-planning-parser-gateway.js";
 import { createCalendarGateway } from "../integrations/calendar/google-calendar-gateway.js";
+import { createAnalyticsCommands } from "../integrations/telegram/analytics-commands.js";
 import { createPlanningCommands } from "../integrations/telegram/planning-commands.js";
 import { createTaskCommands } from "../integrations/telegram/task-commands.js";
 import { createTimeCommands } from "../integrations/telegram/time-commands.js";
@@ -47,6 +48,13 @@ export function createApp(config: AppConfig): App {
   createTimeCommands({
     bot,
     config,
+    timeEntries,
+    workTasks,
+  });
+  createAnalyticsCommands({
+    bot,
+    config,
+    plannedActivities,
     timeEntries,
     workTasks,
   });

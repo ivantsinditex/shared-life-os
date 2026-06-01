@@ -46,6 +46,9 @@ npm run dev
 /time_status [participant]
 /time_today [participant]
 /time_week [participant]
+/analytics_today [participant]
+/analytics_week [participant]
+/analytics_month [participant]
 ```
 
 Example:
@@ -132,6 +135,19 @@ The assistant agent can also control time tracking from natural text or voice:
 Що зараз трекається?
 Скільки сьогодні було deep work?
 Скільки цього тижня було 911?
+```
+
+## Analytics
+
+Analytics combines planned calendar activities, tracked work time, open task baskets, and active timers.
+
+Examples:
+
+```text
+/analytics_today
+/analytics_week
+/analytics_month
+/analytics_week vania
 ```
 
 ## Planned Activity Concept
