@@ -26,6 +26,8 @@ import {
 import type { CalendarBusySlot, CalendarGateway } from "../calendar/google-calendar-gateway.js";
 import type {
   ParsedNaturalPlanningCommand,
+  ParsedPlanningKeepRule,
+  ParsedPlanningScope,
   PlanningTextParserGateway,
 } from "../ai/openai-planning-parser-gateway.js";
 import type { VoiceTranscriptionGateway } from "../voice/openai-transcription-gateway.js";
@@ -56,6 +58,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
   const pendingPlans = new Map<string, NewPlannedActivity>();
   const pendingUpdates = new Map<string, PendingUpdate>();
   const pendingDeletes = new Map<string, PlannedActivity>();
+  const pendingBulkDeletes = new Map<string, PendingBulkDelete>();
 
   bot.command("start", async (ctx) => {
     await ctx.reply(
@@ -223,6 +226,36 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
 
     if (parsed.action === "unknown") {
       await ctx.reply(`I could not turn that into a plan yet: ${parsed.reason}`);
+      return;
+    }
+
+    if (parsed.action === "list") {
+      const activities = await listActivitiesByScope(plannedActivities, parsed.scope, config.timezone);
+
+      await replyWithActivitySummary(ctx, "AI list result", activities, config.timezone);
+      return;
+    }
+
+    if (parsed.action === "delete_many") {
+      const activities = await listActivitiesByScope(plannedActivities, parsed.scope, config.timezone);
+      const deletionPlan = planBulkDelete(activities, parsed.keep);
+
+      if (deletionPlan.deleteCandidates.length === 0) {
+        await ctx.reply("I found no matching activities to delete.");
+        return;
+      }
+
+      const token = randomUUID();
+      pendingBulkDeletes.set(token, {
+        deleteCandidates: deletionPlan.deleteCandidates,
+        keptActivities: deletionPlan.keptActivities,
+      });
+
+      await ctx.reply(formatBulkDeletePreview(deletionPlan, config.timezone), {
+        reply_markup: new InlineKeyboard()
+          .text(`Delete ${deletionPlan.deleteCandidates.length}`, `plan:delete-many-confirm:${token}`)
+          .text("Cancel", `plan:delete-many-cancel:${token}`),
+      });
       return;
     }
 
@@ -415,6 +448,41 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     await ctx.reply("Delete cancelled. Nothing was changed.");
   });
 
+  bot.callbackQuery(/^plan:delete-many-confirm:(.+)$/, async (ctx) => {
+    const pending = pendingBulkDeletes.get(ctx.match[1]);
+
+    await ctx.answerCallbackQuery();
+
+    if (!pending) {
+      await ctx.reply("This bulk delete confirmation expired. Please send the request again.");
+      return;
+    }
+
+    pendingBulkDeletes.delete(ctx.match[1]);
+
+    const result = await deleteActivities({
+      activities: pending.deleteCandidates,
+      calendar,
+      logger,
+      plannedActivities,
+    });
+
+    await ctx.reply(
+      [
+        `Deleted ${result.deletedCount} planned activities.`,
+        result.failedCount > 0 ? `${result.failedCount} activities failed to delete and were marked sync_failed.` : "",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
+  });
+
+  bot.callbackQuery(/^plan:delete-many-cancel:(.+)$/, async (ctx) => {
+    pendingBulkDeletes.delete(ctx.match[1]);
+    await ctx.answerCallbackQuery();
+    await ctx.reply("Bulk delete cancelled. Nothing was changed.");
+  });
+
   bot.command("sync_failed", async (ctx) => {
     const activities = (await plannedActivities.listAll()).filter(
       (activity) => activity.syncStatus === "sync_failed",
@@ -476,6 +544,11 @@ type PendingUpdate = {
   updated: PlannedActivity;
 };
 
+type PendingBulkDelete = {
+  deleteCandidates: PlannedActivity[];
+  keptActivities: PlannedActivity[];
+};
+
 async function transcribeTelegramVoice(
   ctx: Context,
   config: AppConfig,
@@ -533,7 +606,7 @@ function routeVoiceCommand(transcript: string):
 }
 
 function formatNaturalPlanningCommand(parsed: ParsedNaturalPlanningCommand): string {
-  if (parsed.action === "unknown") {
+  if (parsed.action !== "plan" && parsed.action !== "update") {
     return "";
   }
 
@@ -551,6 +624,146 @@ function formatNaturalPlanningCommand(parsed: ParsedNaturalPlanningCommand): str
   }
 
   return planParts.join(" | ");
+}
+
+async function listActivitiesByScope(
+  plannedActivities: PlannedActivityRepository,
+  scope: ParsedPlanningScope,
+  timezone: string,
+): Promise<PlannedActivity[]> {
+  const startsAt = parseScopeDate(scope.startsAt, timezone);
+  const endsAt = parseScopeDate(scope.endsAt, timezone);
+  const activities = await plannedActivities.listBetween({
+    startsAt,
+    endsAt,
+    participant: scope.participant,
+  });
+
+  return activities.filter((activity) => {
+    const categoryMatches = !scope.category || activity.category === scope.category;
+    const titleMatches =
+      !scope.titleContains ||
+      activity.title.toLowerCase().includes(scope.titleContains.toLowerCase());
+
+    return categoryMatches && titleMatches;
+  });
+}
+
+function planBulkDelete(
+  activities: PlannedActivity[],
+  keep: ParsedPlanningKeepRule,
+): { deleteCandidates: PlannedActivity[]; keptActivities: PlannedActivity[] } {
+  if (keep.count <= 0) {
+    return {
+      deleteCandidates: activities,
+      keptActivities: [],
+    };
+  }
+
+  const sortedActivities = [...activities].sort((left, right) => Date.parse(left.startsAt) - Date.parse(right.startsAt));
+  const keptActivities = sortedActivities.filter((activity) => matchesKeepRule(activity, keep)).slice(0, keep.count);
+  const keptIds = new Set(keptActivities.map((activity) => activity.id));
+
+  return {
+    deleteCandidates: sortedActivities.filter((activity) => !keptIds.has(activity.id)),
+    keptActivities,
+  };
+}
+
+function matchesKeepRule(activity: PlannedActivity, keep: ParsedPlanningKeepRule): boolean {
+  const participantMatches = !keep.participant || activity.participant === keep.participant;
+  const categoryMatches = !keep.category || activity.category === keep.category;
+  const titleMatches =
+    !keep.titleContains ||
+    activity.title.toLowerCase().includes(keep.titleContains.toLowerCase());
+
+  return participantMatches && categoryMatches && titleMatches;
+}
+
+function formatBulkDeletePreview(
+  plan: { deleteCandidates: PlannedActivity[]; keptActivities: PlannedActivity[] },
+  timezone: string,
+): string {
+  const lines = [
+    `Delete ${plan.deleteCandidates.length} planned activities?`,
+  ];
+
+  if (plan.keptActivities.length > 0) {
+    lines.push("", "Keeping:", ...formatActivityLines(plan.keptActivities, timezone));
+  }
+
+  lines.push("", "Deleting:", ...formatActivityLines(plan.deleteCandidates, timezone));
+
+  return lines.join("\n");
+}
+
+function formatActivityLines(activities: PlannedActivity[], timezone: string): string[] {
+  return activities.map((activity, index) => {
+    const start = DateTime.fromISO(activity.startsAt).setZone(timezone);
+    const end = DateTime.fromISO(activity.endsAt).setZone(timezone);
+
+    return [
+      `${index + 1}.`,
+      start.toFormat("ccc HH:mm"),
+      "-",
+      end.toFormat("HH:mm"),
+      "|",
+      activity.participant,
+      "|",
+      activity.category,
+      "|",
+      renderCalendarTitle(activity),
+      "|",
+      `id: ${shortId(activity.id)}`,
+    ].join(" ");
+  });
+}
+
+async function deleteActivities(params: {
+  activities: PlannedActivity[];
+  calendar: CalendarGateway;
+  logger: Logger;
+  plannedActivities: PlannedActivityRepository;
+}): Promise<{ deletedCount: number; failedCount: number }> {
+  let deletedCount = 0;
+  let failedCount = 0;
+
+  for (const activity of params.activities) {
+    try {
+      if (activity.googleCalendarEventId) {
+        await params.calendar.deleteEvent(activity.googleCalendarEventId);
+      }
+
+      await params.plannedActivities.update({
+        ...activity,
+        syncStatus: "deleted",
+      });
+      deletedCount += 1;
+    } catch (error) {
+      params.logger.warn("Calendar bulk delete failed", {
+        activityId: activity.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+
+      await params.plannedActivities.update({
+        ...activity,
+        syncStatus: "sync_failed",
+      });
+      failedCount += 1;
+    }
+  }
+
+  return { deletedCount, failedCount };
+}
+
+function parseScopeDate(value: string, timezone: string): string {
+  const parsed = DateTime.fromFormat(value, "yyyy-MM-dd HH:mm", { zone: timezone });
+
+  if (!parsed.isValid) {
+    throw new Error(`Could not understand AI scope date "${value}".`);
+  }
+
+  return toIso(parsed);
 }
 
 async function checkPlanConflicts(
@@ -620,7 +833,6 @@ function formatActivitySummary(
   const lines = activities.map((activity) => {
     const start = DateTime.fromISO(activity.startsAt).setZone(timezone);
     const end = DateTime.fromISO(activity.endsAt).setZone(timezone);
-    const visibleTitle = activity.privacy === "shared_details" ? activity.title : "Busy";
 
     return [
       start.toFormat("ccc HH:mm"),
@@ -631,7 +843,7 @@ function formatActivitySummary(
       "|",
       activity.category,
       "|",
-      visibleTitle,
+      renderCalendarTitle(activity),
       "|",
       `sync: ${activity.syncStatus}`,
       "|",

@@ -53,6 +53,13 @@ Use `/today` or `/week` to see short ids and delete buttons. Use `/sync_failed` 
 
 Voice messages can contain the same text, for example: `/plan Workout | vania | sport | 2026-06-01 08:00 | 60 | busy_only`.
 They can also use natural language, for example: `Plan workout for Vania tomorrow at 18:30 for 60 minutes, busy only`.
+Natural-language voice also supports safe previews for list and bulk delete requests, for example:
+
+```text
+Show my events today
+Delete all events today
+Delete everything today except one workout
+```
 
 ## Planned Activity Concept
 
