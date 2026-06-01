@@ -25,6 +25,10 @@ import {
 } from "../../domain/privacy-rendering.js";
 import type { CalendarBusySlot, CalendarGateway } from "../calendar/google-calendar-gateway.js";
 import type {
+  AssistantAgentAction,
+  AssistantAgentGateway,
+} from "../ai/openai-assistant-agent-gateway.js";
+import type {
   ParsedNaturalPlanningCommand,
   ParsedPlanningDraft,
   ParsedPlanningMissingField,
@@ -45,6 +49,7 @@ import type { Logger } from "../../utils/logger.js";
 
 type PlanningCommandDeps = {
   bot: Bot;
+  assistantAgent: AssistantAgentGateway;
   calendar: CalendarGateway;
   config: AppConfig;
   logger: Logger;
@@ -56,6 +61,7 @@ type PlanningCommandDeps = {
 export function createPlanningCommands(deps: PlanningCommandDeps): void {
   const {
     bot,
+    assistantAgent,
     calendar,
     config,
     logger,
@@ -253,6 +259,14 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
       return;
     }
 
+    if (assistantAgent.isEnabled()) {
+      const handledByAgent = await handleAgentText(ctx, text);
+
+      if (handledByAgent) {
+        return;
+      }
+    }
+
     const parsed = await planningTextParser.parse({
       text,
       timezone: config.timezone,
@@ -278,31 +292,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     }
 
     if (parsed.action === "delete_many") {
-      const activities = await listActivitiesByScope(plannedActivities, parsed.scope, config.timezone);
-      const deletionPlan = planBulkDelete(activities, parsed.keepRules, config.timezone);
-
-      if (deletionPlan.unmatchedKeepRules.length > 0) {
-        await ctx.reply(formatUnmatchedKeepRules(deletionPlan.unmatchedKeepRules));
-        return;
-      }
-
-      if (deletionPlan.deleteCandidates.length === 0) {
-        await ctx.reply("I found no matching activities to delete.");
-        return;
-      }
-
-      const token = randomUUID();
-      pendingBulkDeletes.set(token, {
-        deleteCandidates: deletionPlan.deleteCandidates,
-        keptActivities: deletionPlan.keptActivities,
-      });
-      rememberActivities(ctx, [...deletionPlan.keptActivities, ...deletionPlan.deleteCandidates]);
-
-      await ctx.reply(formatBulkDeletePreview(deletionPlan, config.timezone), {
-        reply_markup: new InlineKeyboard()
-          .text(`Delete ${deletionPlan.deleteCandidates.length}`, `plan:delete-many-confirm:${token}`)
-          .text("Cancel", `plan:delete-many-cancel:${token}`),
-      });
+      await previewBulkDelete(ctx, parsed.scope, parsed.keepRules);
       return;
     }
 
@@ -317,6 +307,76 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
 
     await handleUpdateInput(ctx, commandInput);
   };
+
+  async function handleAgentText(ctx: Context, text: string): Promise<boolean> {
+    const result = await assistantAgent.respond({
+      text,
+      timezone: config.timezone,
+      now: DateTime.now().setZone(config.timezone).toFormat("yyyy-MM-dd HH:mm"),
+      recentActivities: recentActivitiesByUser.get(userContextKey(ctx)) ?? [],
+    });
+
+    if (result.reply) {
+      await ctx.reply(result.reply);
+    }
+
+    if (result.actions.length === 0) {
+      return Boolean(result.reply);
+    }
+
+    for (const action of result.actions) {
+      await handleAgentAction(ctx, action);
+    }
+
+    return true;
+  }
+
+  async function handleAgentAction(ctx: Context, action: AssistantAgentAction): Promise<void> {
+    if (action.type === "answer") {
+      if (action.message) {
+        await ctx.reply(action.message);
+      }
+      return;
+    }
+
+    if (action.type === "ask_clarification") {
+      await ctx.reply(action.message);
+      return;
+    }
+
+    if (action.type === "draft_create") {
+      await handlePlanInput(ctx, formatAgentCreateAction(action));
+      return;
+    }
+
+    if (action.type === "list") {
+      const activities = await listActivitiesByScope(plannedActivities, action.scope, config.timezone);
+
+      rememberActivities(ctx, activities);
+      await replyWithActivitySummary(ctx, "Assistant list result", activities, config.timezone);
+      return;
+    }
+
+    if (action.type === "draft_delete_many") {
+      await previewBulkDelete(ctx, action.scope, action.keepRules);
+      return;
+    }
+
+    if (action.type === "draft_delete_recent") {
+      await previewRecentDelete(ctx, action);
+    }
+  }
+
+  function formatAgentCreateAction(action: Extract<AssistantAgentAction, { type: "draft_create" }>): string {
+    return [
+      action.title,
+      action.participant,
+      action.category,
+      action.start,
+      String(action.durationMinutes),
+      action.privacy,
+    ].join(" | ");
+  }
 
   bot.callbackQuery(/^plan:create:(.+)$/, async (ctx) => {
     const token = ctx.match[1];
@@ -663,6 +723,65 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
         .text("Cancel", `plan:delete-cancel:${token}`),
     });
     return true;
+  }
+
+  async function previewBulkDelete(
+    ctx: Context,
+    scope: ParsedPlanningScope,
+    keepRules: ParsedPlanningKeepRule[],
+  ): Promise<void> {
+    const activities = await listActivitiesByScope(plannedActivities, scope, config.timezone);
+    const deletionPlan = planBulkDelete(activities, keepRules, config.timezone);
+
+    if (deletionPlan.unmatchedKeepRules.length > 0) {
+      await ctx.reply(formatUnmatchedKeepRules(deletionPlan.unmatchedKeepRules));
+      return;
+    }
+
+    if (deletionPlan.deleteCandidates.length === 0) {
+      await ctx.reply("I found no matching activities to delete.");
+      return;
+    }
+
+    const token = randomUUID();
+    pendingBulkDeletes.set(token, {
+      deleteCandidates: deletionPlan.deleteCandidates,
+      keptActivities: deletionPlan.keptActivities,
+    });
+    rememberActivities(ctx, [...deletionPlan.keptActivities, ...deletionPlan.deleteCandidates]);
+
+    await ctx.reply(formatBulkDeletePreview(deletionPlan, config.timezone), {
+      reply_markup: new InlineKeyboard()
+        .text(`Delete ${deletionPlan.deleteCandidates.length}`, `plan:delete-many-confirm:${token}`)
+        .text("Cancel", `plan:delete-many-cancel:${token}`),
+    });
+  }
+
+  async function previewRecentDelete(
+    ctx: Context,
+    action: Extract<AssistantAgentAction, { type: "draft_delete_recent" }>,
+  ): Promise<void> {
+    const candidates = recentActivitiesByUser.get(userContextKey(ctx)) ?? [];
+    const activity = action.activityId
+      ? candidates.find((candidate) => candidate.id === action.activityId)
+      : candidates.find((candidate) =>
+          !action.titleContains ||
+          candidate.title.toLowerCase().includes(action.titleContains.toLowerCase()),
+        );
+
+    if (!activity || activity.syncStatus === "deleted") {
+      await ctx.reply("I could not find the recent activity you mean. Try /today or describe it with date/time.");
+      return;
+    }
+
+    const token = randomUUID();
+    pendingDeletes.set(token, activity);
+
+    await ctx.reply(["Delete this planned activity?", "", formatActivitySaved(activity)].join("\n"), {
+      reply_markup: new InlineKeyboard()
+        .text("Delete", `plan:delete-confirm:${token}`)
+        .text("Cancel", `plan:delete-cancel:${token}`),
+    });
   }
 }
 
