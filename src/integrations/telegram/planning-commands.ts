@@ -26,12 +26,20 @@ import {
 import type { CalendarBusySlot, CalendarGateway } from "../calendar/google-calendar-gateway.js";
 import type {
   ParsedNaturalPlanningCommand,
+  ParsedPlanningDraft,
+  ParsedPlanningMissingField,
   ParsedPlanningKeepRule,
   ParsedPlanningScope,
   PlanningTextParserGateway,
 } from "../ai/openai-planning-parser-gateway.js";
 import type { VoiceTranscriptionGateway } from "../voice/openai-transcription-gateway.js";
-import type { NewPlannedActivity, PlannedActivity } from "../../domain/planned-activity.js";
+import {
+  activityCategories,
+  participants,
+  privacyLevels,
+  type NewPlannedActivity,
+  type PlannedActivity,
+} from "../../domain/planned-activity.js";
 import type { PlannedActivityRepository } from "../../domain/planned-activity.js";
 import type { Logger } from "../../utils/logger.js";
 
@@ -59,6 +67,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
   const pendingUpdates = new Map<string, PendingUpdate>();
   const pendingDeletes = new Map<string, PlannedActivity>();
   const pendingBulkDeletes = new Map<string, PendingBulkDelete>();
+  const pendingClarifications = new Map<string, PendingClarification>();
 
   bot.command("start", async (ctx) => {
     await ctx.reply(
@@ -175,6 +184,27 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     });
   };
 
+  const requestClarification = async (
+    ctx: Context,
+    parsed: Extract<ParsedNaturalPlanningCommand, { action: "needs_clarification" }>,
+  ): Promise<void> => {
+    const missingFields = parsed.missingFields.length > 0
+      ? parsed.missingFields
+      : getDraftMissingFields(parsed.draft);
+    const token = randomUUID();
+
+    if (missingFields.length === 0) {
+      await handlePlanInput(ctx, formatPlanningDraft(parsed.draft));
+      return;
+    }
+
+    pendingClarifications.set(token, {
+      draft: parsed.draft,
+      missingFields,
+    });
+    await replyWithClarificationQuestion(ctx, token, parsed.draft, missingFields, parsed.question);
+  };
+
   bot.command("plan", async (ctx) => {
     await handlePlanInput(ctx, ctx.match.trim());
   });
@@ -226,6 +256,11 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
 
     if (parsed.action === "unknown") {
       await ctx.reply(`I could not turn that into a plan yet: ${parsed.reason}`);
+      return;
+    }
+
+    if (parsed.action === "needs_clarification") {
+      await requestClarification(ctx, parsed);
       return;
     }
 
@@ -488,6 +523,33 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     await ctx.reply("Bulk delete cancelled. Nothing was changed.");
   });
 
+  bot.callbackQuery(/^plan:clarify:(.+):([^:]+):(.+)$/, async (ctx) => {
+    const [, token, field, value] = ctx.match;
+    const pending = pendingClarifications.get(token);
+
+    await ctx.answerCallbackQuery();
+
+    if (!pending || !isClarifiableField(field)) {
+      await ctx.reply("This clarification expired. Please send the request again.");
+      return;
+    }
+
+    const updatedDraft = applyClarification(pending.draft, field, value);
+    const missingFields = getDraftMissingFields(updatedDraft);
+
+    if (missingFields.length > 0) {
+      pendingClarifications.set(token, {
+        draft: updatedDraft,
+        missingFields,
+      });
+      await replyWithClarificationQuestion(ctx, token, updatedDraft, missingFields);
+      return;
+    }
+
+    pendingClarifications.delete(token);
+    await handlePlanInput(ctx, formatPlanningDraft(updatedDraft));
+  });
+
   bot.command("sync_failed", async (ctx) => {
     const activities = (await plannedActivities.listAll()).filter(
       (activity) => activity.syncStatus === "sync_failed",
@@ -552,6 +614,11 @@ type PendingUpdate = {
 type PendingBulkDelete = {
   deleteCandidates: PlannedActivity[];
   keptActivities: PlannedActivity[];
+};
+
+type PendingClarification = {
+  draft: ParsedPlanningDraft;
+  missingFields: ParsedPlanningMissingField[];
 };
 
 async function transcribeTelegramVoice(
@@ -629,6 +696,123 @@ function formatNaturalPlanningCommand(parsed: ParsedNaturalPlanningCommand): str
   }
 
   return planParts.join(" | ");
+}
+
+function getDraftMissingFields(draft: ParsedPlanningDraft): ParsedPlanningMissingField[] {
+  return [
+    !draft.title ? "title" : undefined,
+    !draft.participant ? "participant" : undefined,
+    !draft.category ? "category" : undefined,
+    !draft.start ? "start" : undefined,
+    !draft.durationMinutes ? "duration" : undefined,
+    !draft.privacy ? "privacy" : undefined,
+  ].filter((field): field is ParsedPlanningMissingField => Boolean(field));
+}
+
+async function replyWithClarificationQuestion(
+  ctx: Context,
+  token: string,
+  draft: ParsedPlanningDraft,
+  missingFields: ParsedPlanningMissingField[],
+  question?: string,
+): Promise<void> {
+  const field = missingFields[0];
+  const keyboard = buildClarificationKeyboard(token, field);
+
+  await ctx.reply(
+    [
+      question || getClarificationQuestion(field),
+      "",
+      "Current draft:",
+      formatDraftPreview(draft),
+    ].join("\n"),
+    keyboard ? { reply_markup: keyboard } : undefined,
+  );
+}
+
+function buildClarificationKeyboard(
+  token: string,
+  field: ParsedPlanningMissingField,
+): InlineKeyboard | undefined {
+  if (field === "participant") {
+    return participants.reduce(
+      (keyboard, participant) => keyboard.text(participant, `plan:clarify:${token}:participant:${participant}`).row(),
+      new InlineKeyboard(),
+    );
+  }
+
+  if (field === "category") {
+    return activityCategories.reduce(
+      (keyboard, category) => keyboard.text(category, `plan:clarify:${token}:category:${category}`).row(),
+      new InlineKeyboard(),
+    );
+  }
+
+  if (field === "privacy") {
+    return privacyLevels.reduce(
+      (keyboard, privacy) => keyboard.text(privacy, `plan:clarify:${token}:privacy:${privacy}`).row(),
+      new InlineKeyboard(),
+    );
+  }
+
+  return undefined;
+}
+
+function getClarificationQuestion(field: ParsedPlanningMissingField): string {
+  const questions: Record<ParsedPlanningMissingField, string> = {
+    title: "What should I call this activity?",
+    participant: "Who is this activity for?",
+    category: "Which category should I use?",
+    start: "When should it start?",
+    duration: "How long should it last?",
+    privacy: "Which privacy level should I use?",
+  };
+
+  return questions[field];
+}
+
+function applyClarification(
+  draft: ParsedPlanningDraft,
+  field: ParsedPlanningMissingField,
+  value: string,
+): ParsedPlanningDraft {
+  if (field === "duration") {
+    return {
+      ...draft,
+      durationMinutes: Number(value),
+    };
+  }
+
+  return {
+    ...draft,
+    [field === "start" ? "start" : field]: value,
+  };
+}
+
+function isClarifiableField(field: string): field is ParsedPlanningMissingField {
+  return ["title", "participant", "category", "start", "duration", "privacy"].includes(field);
+}
+
+function formatPlanningDraft(draft: ParsedPlanningDraft): string {
+  return [
+    draft.title,
+    draft.participant,
+    draft.category,
+    draft.start,
+    String(draft.durationMinutes),
+    draft.privacy,
+  ].join(" | ");
+}
+
+function formatDraftPreview(draft: ParsedPlanningDraft): string {
+  return [
+    `Title: ${draft.title ?? "?"}`,
+    `Participant: ${draft.participant ?? "?"}`,
+    `Category: ${draft.category ?? "?"}`,
+    `Start: ${draft.start ?? "?"}`,
+    `Duration: ${draft.durationMinutes ? `${draft.durationMinutes} min` : "?"}`,
+    `Privacy: ${draft.privacy ?? "?"}`,
+  ].join("\n");
 }
 
 async function listActivitiesByScope(

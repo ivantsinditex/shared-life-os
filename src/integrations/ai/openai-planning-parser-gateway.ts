@@ -23,6 +23,12 @@ export type ParsedNaturalPlanningCommand =
       privacy: ParsedPrivacy;
     }
   | {
+      action: "needs_clarification";
+      draft: ParsedPlanningDraft;
+      missingFields: ParsedPlanningMissingField[];
+      question: string;
+    }
+  | {
       action: "list";
       scope: ParsedPlanningScope;
     }
@@ -48,6 +54,22 @@ type ParsedCategory =
   | "together"
   | "other";
 type ParsedPrivacy = "private" | "busy_only" | "shared_details";
+export type ParsedPlanningMissingField =
+  | "title"
+  | "participant"
+  | "category"
+  | "start"
+  | "duration"
+  | "privacy";
+
+export type ParsedPlanningDraft = {
+  title?: string;
+  participant?: ParsedParticipant;
+  category?: ParsedCategory;
+  start?: string;
+  durationMinutes?: number;
+  privacy?: ParsedPrivacy;
+};
 
 export type ParsedPlanningScope = {
   startsAt: string;
@@ -77,7 +99,7 @@ export interface PlanningTextParserGateway {
 }
 
 const parsedResponseSchema = z.object({
-  action: z.enum(["plan", "update", "list", "delete_many", "unknown"]),
+  action: z.enum(["plan", "update", "needs_clarification", "list", "delete_many", "unknown"]),
   short_id: z.string(),
   title: z.string(),
   participant: z.enum(["vania", "nastia", "both", ""]),
@@ -217,6 +239,9 @@ function buildSystemPrompt(timezone: string, now: string): string {
     "Participants: vania means Vania/Ivan/Vanya/мені/мене/Іван/Ваня; nastia means Nastia/Настя; both means together/us/разом/нам.",
     "Categories: sport, work, learning, reading, dogs, horse, care, together, other.",
     "Privacy: busy only/busy/зайнятий -> busy_only; private/приватно -> private; shared details/details/деталі -> shared_details.",
+    "If privacy is omitted for a plan, use busy_only by default.",
+    "Yoga, workout, gym, run, йога, воркаут, зал, пробіжка are sport.",
+    "If the user says me/my/мені/моє/мого, use participant vania.",
     "Use 24-hour local time formatted as YYYY-MM-DD HH:mm.",
     "If date is omitted but time is present, use the nearest future date.",
     "If duration is omitted, use 60 minutes.",
@@ -228,7 +253,9 @@ function buildSystemPrompt(timezone: string, now: string): string {
     "For 'except Nastia yoga and one workout at 18', create two keep rules: one for Nastia yoga, one for workout with start_time 18:00.",
     "Use start_time only when the user names a time for the exception. Format it as HH:mm.",
     "Use delete_many only for deletion requests. The application will ask for confirmation before deleting.",
-    "If required planning details are too ambiguous, action must be unknown and reason must explain what is missing.",
+    "If a plan is likely but title, participant, category, start, duration, or privacy cannot be inferred, use action needs_clarification and fill every draft field you can infer.",
+    "For needs_clarification, reason should stay empty and question should ask one concise question.",
+    "Use unknown only when the text is not a calendar planning/list/delete/update request.",
   ].join("\n");
 }
 
@@ -251,6 +278,18 @@ function toDomainParsedCommand(
     return {
       action: "unknown",
       reason: parsed.reason || "I could not understand the planning request.",
+    };
+  }
+
+  if (parsed.action === "needs_clarification") {
+    const draft = toPlanningDraft(parsed);
+    const missingFields = getMissingFields(draft);
+
+    return {
+      action: "needs_clarification",
+      draft,
+      missingFields,
+      question: parsed.reason || `I need ${missingFields.join(", ")} to finish this plan.`,
     };
   }
 
@@ -300,10 +339,15 @@ function toDomainParsedCommand(
   };
 
   if (!common.title || !common.participant || !common.category || !common.start || !common.privacy) {
-    return {
-      action: "unknown",
-      reason: "Required planning details are missing.",
-    };
+      const draft = toPlanningDraft(parsed);
+      const missingFields = getMissingFields(draft);
+
+      return {
+        action: "needs_clarification",
+        draft,
+        missingFields,
+        question: `I need ${missingFields.join(", ")} to finish this plan.`,
+      };
   }
 
   if (parsed.action === "update") {
@@ -325,6 +369,28 @@ function toDomainParsedCommand(
     action: "plan",
     ...common,
   };
+}
+
+function toPlanningDraft(parsed: z.infer<typeof parsedResponseSchema>): ParsedPlanningDraft {
+  return {
+    title: emptyToUndefined(parsed.title),
+    participant: emptyToUndefined(parsed.participant) as ParsedParticipant | undefined,
+    category: emptyToUndefined(parsed.category) as ParsedCategory | undefined,
+    start: emptyToUndefined(parsed.start),
+    durationMinutes: parsed.duration_minutes > 0 ? parsed.duration_minutes : undefined,
+    privacy: emptyToUndefined(parsed.privacy) as ParsedPrivacy | undefined,
+  };
+}
+
+function getMissingFields(draft: ParsedPlanningDraft): ParsedPlanningMissingField[] {
+  return [
+    !draft.title ? "title" : undefined,
+    !draft.participant ? "participant" : undefined,
+    !draft.category ? "category" : undefined,
+    !draft.start ? "start" : undefined,
+    !draft.durationMinutes ? "duration" : undefined,
+    !draft.privacy ? "privacy" : undefined,
+  ].filter((field): field is ParsedPlanningMissingField => Boolean(field));
 }
 
 function emptyToUndefined(value: string): string | undefined {
@@ -356,7 +422,7 @@ const planningCommandSchema = {
   properties: {
     action: {
       type: "string",
-      enum: ["plan", "update", "list", "delete_many", "unknown"],
+      enum: ["plan", "update", "needs_clarification", "list", "delete_many", "unknown"],
     },
     short_id: {
       type: "string",
