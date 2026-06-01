@@ -9,7 +9,14 @@ export type AnalyticsSummaryInput = {
   timeEntries: TimeEntry[];
   openTasks: WorkTask[];
   activeTimeEntry?: TimeEntry;
+  trendBuckets?: AnalyticsTrendBucket[];
   now?: string;
+};
+
+export type AnalyticsTrendBucket = {
+  label: string;
+  startsAt: string;
+  endsAt: string;
 };
 
 export function formatAnalyticsSummary(input: AnalyticsSummaryInput): string {
@@ -29,6 +36,9 @@ export function formatAnalyticsSummary(input: AnalyticsSummaryInput): string {
     `Delta: ${formatSignedDuration(deltaMinutes)}`,
     input.activeTimeEntry ? `Active timer: ${formatBasketLabel(input.activeTimeEntry.basket)} | ${input.activeTimeEntry.title}` : "Active timer: none",
     "",
+    "Trend:",
+    ...formatTrend(input.trendBuckets ?? [], input.plannedActivities, input.timeEntries, now),
+    "",
     "Tracked by basket:",
     ...formatBasketBreakdown(trackedByBasket),
     "",
@@ -38,6 +48,49 @@ export function formatAnalyticsSummary(input: AnalyticsSummaryInput): string {
     "Open tasks:",
     ...formatTaskBreakdown(openTasksByBasket),
   ].join("\n");
+}
+
+function formatTrend(
+  buckets: AnalyticsTrendBucket[],
+  activities: PlannedActivity[],
+  entries: TimeEntry[],
+  fallbackEnd: string,
+): string[] {
+  if (buckets.length === 0) {
+    return ["- none"];
+  }
+
+  const rows = buckets.map((bucket) => {
+    const planned = sumPlannedMinutes(filterActivitiesByBucket(activities, bucket));
+    const tracked = sumTrackedMinutes(filterEntriesByBucket(entries, bucket), fallbackEnd);
+
+    return {
+      label: bucket.label,
+      planned,
+      tracked,
+    };
+  });
+  const maxMinutes = Math.max(...rows.flatMap((row) => [row.planned, row.tracked]), 1);
+
+  return rows.map((row) => [
+    `- ${row.label}`,
+    `P ${formatBar(row.planned, maxMinutes)} ${formatDuration(row.planned)}`,
+    `T ${formatBar(row.tracked, maxMinutes)} ${formatDuration(row.tracked)}`,
+  ].join(" | "));
+}
+
+function filterActivitiesByBucket(activities: PlannedActivity[], bucket: AnalyticsTrendBucket): PlannedActivity[] {
+  const startsAt = Date.parse(bucket.startsAt);
+  const endsAt = Date.parse(bucket.endsAt);
+
+  return activities.filter((activity) => Date.parse(activity.startsAt) < endsAt && Date.parse(activity.endsAt) > startsAt);
+}
+
+function filterEntriesByBucket(entries: TimeEntry[], bucket: AnalyticsTrendBucket): TimeEntry[] {
+  const startsAt = Date.parse(bucket.startsAt);
+  const endsAt = Date.parse(bucket.endsAt);
+
+  return entries.filter((entry) => Date.parse(entry.startedAt) < endsAt && Date.parse(entry.endedAt ?? new Date().toISOString()) > startsAt);
 }
 
 function sumPlannedMinutes(activities: PlannedActivity[]): number {
@@ -143,4 +196,11 @@ function formatSignedDuration(minutes: number): string {
   const sign = minutes > 0 ? "+" : "-";
 
   return `${sign}${formatDuration(Math.abs(minutes))}`;
+}
+
+function formatBar(minutes: number, maxMinutes: number): string {
+  const width = 8;
+  const filled = Math.round((minutes / maxMinutes) * width);
+
+  return `${"#".repeat(filled)}${"-".repeat(width - filled)}`;
 }
