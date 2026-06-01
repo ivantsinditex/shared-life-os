@@ -1,7 +1,7 @@
 import type { PlannedActivity, PrivacyLevel } from "./planned-activity.js";
 
 export function renderCalendarTitle(activity: Pick<PlannedActivity, "title" | "participant" | "privacy">): string {
-  if (activity.privacy === "shared_details") {
+  if (activity.privacy !== "private") {
     return activity.title;
   }
 
@@ -9,11 +9,11 @@ export function renderCalendarTitle(activity: Pick<PlannedActivity, "title" | "p
 }
 
 export function toGoogleVisibility(privacy: PrivacyLevel): "default" | "private" {
-  return privacy === "shared_details" ? "default" : "private";
+  return privacy === "private" ? "private" : "default";
 }
 
 export function renderCalendarDescription(activity: PlannedActivity): string {
-  if (activity.privacy !== "shared_details") {
+  if (activity.privacy === "private") {
     return [
       "Created by Shared Life OS.",
       "Details are private in the bot.",

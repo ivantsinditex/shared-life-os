@@ -8,12 +8,22 @@ import {
 import type { PlannedActivity } from "../src/domain/planned-activity.js";
 
 describe("privacy rendering", () => {
-  it("hides busy-only details", () => {
+  it("keeps busy-only details visible for shared calendar members", () => {
     expect(
       renderCalendarTitle({
         title: "Nastia care",
         participant: "nastia",
         privacy: "busy_only",
+      }),
+    ).toBe("Nastia care");
+  });
+
+  it("hides private details", () => {
+    expect(
+      renderCalendarTitle({
+        title: "Nastia care",
+        participant: "nastia",
+        privacy: "private",
       }),
     ).toBe("Nastia busy");
   });
@@ -30,15 +40,27 @@ describe("privacy rendering", () => {
 
   it("maps sensitive events to private Google visibility", () => {
     expect(toGoogleVisibility("private")).toBe("private");
-    expect(toGoogleVisibility("busy_only")).toBe("private");
+    expect(toGoogleVisibility("busy_only")).toBe("default");
     expect(toGoogleVisibility("shared_details")).toBe("default");
   });
 
-  it("does not leak internal details in busy-only descriptions", () => {
+  it("keeps internal details in busy-only descriptions", () => {
     const description = renderCalendarDescription(
       makeActivity({
         title: "Deep private focus",
         privacy: "busy_only",
+      }),
+    );
+
+    expect(description).toContain("Deep private focus");
+    expect(description).toContain("Privacy: busy_only");
+  });
+
+  it("does not leak internal details in private descriptions", () => {
+    const description = renderCalendarDescription(
+      makeActivity({
+        title: "Deep private focus",
+        privacy: "private",
       }),
     );
 
