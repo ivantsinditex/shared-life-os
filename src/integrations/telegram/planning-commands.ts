@@ -52,6 +52,13 @@ import {
   formatTaskSaved,
 } from "../../domain/task-formatting.js";
 import type { WorkTask, WorkTaskRepository } from "../../domain/task.js";
+import {
+  formatActiveTimeEntry,
+  formatTimeStarted,
+  formatTimeStopped,
+  formatTimeSummary,
+} from "../../domain/time-entry-formatting.js";
+import type { TimeEntryRepository } from "../../domain/time-entry.js";
 import type { Logger } from "../../utils/logger.js";
 
 type PlanningCommandDeps = {
@@ -62,6 +69,7 @@ type PlanningCommandDeps = {
   logger: Logger;
   plannedActivities: PlannedActivityRepository;
   planningTextParser: PlanningTextParserGateway;
+  timeEntries: TimeEntryRepository;
   voiceTranscription: VoiceTranscriptionGateway;
   workTasks: WorkTaskRepository;
 };
@@ -75,6 +83,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     logger,
     plannedActivities,
     planningTextParser,
+    timeEntries,
     voiceTranscription,
     workTasks,
   } = deps;
@@ -336,6 +345,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
       now: DateTime.now().setZone(config.timezone).toFormat("yyyy-MM-dd HH:mm"),
       recentActivities: contextActivities,
       openTasks: await loadAgentContextTasks(ctx),
+      activeTimeEntry: await timeEntries.getActive(),
     });
 
     if (result.reply) {
@@ -482,6 +492,69 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
 
       rememberTasks(ctx, [updated]);
       await ctx.reply(formatTaskClosed(updated));
+      return;
+    }
+
+    if (action.type === "time_start") {
+      const task = action.taskId ? findRecentTask(ctx, action.taskId) : undefined;
+      const basket = action.basket ?? task?.basket;
+
+      if (!basket) {
+        await ctx.reply("Which basket or task should I start tracking?");
+        return;
+      }
+
+      const active = await timeEntries.getActive({ participant: action.participant });
+
+      if (active) {
+        await ctx.reply(["You already have an active timer.", "", formatActiveTimeEntry(active, config.timezone)].join("\n"));
+        return;
+      }
+
+      const entry = await timeEntries.create({
+        basket,
+        title: action.title ?? task?.title ?? basket,
+        participant: action.participant ?? task?.participant,
+        taskId: task?.id,
+        startedAt: new Date().toISOString(),
+      });
+
+      await ctx.reply(formatTimeStarted(entry, config.timezone));
+      return;
+    }
+
+    if (action.type === "time_stop") {
+      const active = await timeEntries.getActive({ participant: action.participant });
+
+      if (!active) {
+        await ctx.reply("No active timer.");
+        return;
+      }
+
+      const updated = await timeEntries.update({
+        ...active,
+        endedAt: new Date().toISOString(),
+      });
+
+      await ctx.reply(formatTimeStopped(updated, config.timezone));
+      return;
+    }
+
+    if (action.type === "time_status") {
+      const active = await timeEntries.getActive({ participant: action.participant });
+
+      await ctx.reply(formatActiveTimeEntry(active, config.timezone));
+      return;
+    }
+
+    if (action.type === "time_summary") {
+      const entries = await timeEntries.listBetween({
+        startsAt: parseScopeDate(action.startsAt, config.timezone),
+        endsAt: parseScopeDate(action.endsAt, config.timezone),
+        participant: action.participant,
+      });
+
+      await ctx.reply(formatTimeSummary("Tracked time", entries, config.timezone));
     }
   }
 

@@ -36,6 +36,7 @@ export function createApp(config: AppConfig): App {
     logger,
     plannedActivities,
     planningTextParser,
+    timeEntries,
     voiceTranscription,
     workTasks,
   });

@@ -123,6 +123,17 @@ Examples:
 /time_week vania
 ```
 
+The assistant agent can also control time tracking from natural text or voice:
+
+```text
+Почав deep work по архітектурі
+Почала 911 задачу
+Закінчив
+Що зараз трекається?
+Скільки сьогодні було deep work?
+Скільки цього тижня було 911?
+```
+
 ## Planned Activity Concept
 
 A planned activity is the product source of truth for calendar planning. Google Calendar is the synchronized availability surface, not the only place where product meaning lives.
@@ -147,5 +158,4 @@ Voice transcription and natural-language planning are optional and use OpenAI. A
 
 ## Next Implementation Slice
 
-1. Natural-language and voice control for time tracking.
-2. Monthly analytics foundation.
+1. Monthly analytics foundation.

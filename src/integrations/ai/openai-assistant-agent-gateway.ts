@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { AppConfig } from "../../config/config.js";
 import type { PlannedActivity } from "../../domain/planned-activity.js";
 import type { TaskBasket, WorkTask } from "../../domain/task.js";
+import type { TimeEntry } from "../../domain/time-entry.js";
 import type {
   ParsedPlanningKeepRule,
   ParsedPlanningScope,
@@ -27,6 +28,7 @@ export type AssistantAgentInput = {
   now: string;
   recentActivities: PlannedActivity[];
   openTasks: WorkTask[];
+  activeTimeEntry?: TimeEntry;
 };
 
 export type AssistantAgentResult = {
@@ -97,6 +99,27 @@ export type AssistantAgentAction =
       type: "task_close_recent";
       taskId?: string;
       titleContains?: string;
+    }
+  | {
+      type: "time_start";
+      basket?: TaskBasket;
+      taskId?: string;
+      title?: string;
+      participant?: AgentParticipant;
+    }
+  | {
+      type: "time_stop";
+      participant?: AgentParticipant;
+    }
+  | {
+      type: "time_status";
+      participant?: AgentParticipant;
+    }
+  | {
+      type: "time_summary";
+      startsAt: string;
+      endsAt: string;
+      participant?: AgentParticipant;
     };
 
 export interface AssistantAgentGateway {
@@ -120,6 +143,10 @@ const agentResponseSchema = z.object({
         "task_list",
         "task_move_recent",
         "task_close_recent",
+        "time_start",
+        "time_stop",
+        "time_status",
+        "time_summary",
       ]),
       message: z.string(),
       activity_id: z.string(),
@@ -182,6 +209,12 @@ const agentResponseSchema = z.object({
       task_basket: z.enum(["911", "operational", "deep_work", "random", "personal_brand", "other", ""]),
       task_participant: z.enum(["vania", "nastia", "both", ""]),
       target_task_basket: z.enum(["911", "operational", "deep_work", "random", "personal_brand", "other", ""]),
+      time_basket: z.enum(["911", "operational", "deep_work", "random", "personal_brand", "other", ""]),
+      time_title: z.string(),
+      time_participant: z.enum(["vania", "nastia", "both", ""]),
+      time_task_id: z.string(),
+      time_scope_start: z.string(),
+      time_scope_end: z.string(),
     }),
   ),
 });
@@ -237,6 +270,7 @@ class OpenAiAssistantAgentGateway implements AssistantAgentGateway {
               user_text: input.text,
               recent_activities: input.recentActivities.map(toRecentActivityContext),
               open_tasks: input.openTasks.map(toOpenTaskContext),
+              active_time_entry: input.activeTimeEntry ? toActiveTimeEntryContext(input.activeTimeEntry) : null,
             }),
           },
         ],
@@ -294,6 +328,12 @@ function buildAgentPrompt(timezone: string, now: string): string {
     "For requests like move/перенеси this task to deep work, return task_move_recent with the matching open task id and target basket.",
     "For requests like close/done/закрий task, return task_close_recent with the matching open task id.",
     "Use open_tasks to resolve task follow-ups like this task, last task, цю задачу, останню задачу, or title references.",
+    "You also manage time tracking. For 'start/почав/почала трекати deep work/911/операційку', return time_start.",
+    "For 'start tracking this task/почав цю задачу', return time_start with matching open task id.",
+    "For 'stop/закінчив/закінчила/стоп/зупини таймер', return time_stop.",
+    "For 'what is active/що зараз трекається/status', return time_status.",
+    "For 'how much today/скільки сьогодні/цього тижня було 911/deep work', return time_summary with local scope_start and scope_end.",
+    "For time_summary date ranges: today is local 00:00 to tomorrow 00:00; this week is Monday 00:00 to next Monday 00:00.",
   ].join("\n");
 }
 
@@ -308,6 +348,17 @@ function toRecentActivityContext(activity: PlannedActivity): Record<string, stri
     ends_at: activity.endsAt,
     privacy: activity.privacy,
     sync_status: activity.syncStatus,
+  };
+}
+
+function toActiveTimeEntryContext(entry: TimeEntry): Record<string, string> {
+  return {
+    id: entry.id,
+    basket: entry.basket,
+    title: entry.title,
+    participant: entry.participant ?? "",
+    task_id: entry.taskId ?? "",
+    started_at: entry.startedAt,
   };
 }
 
@@ -480,6 +531,46 @@ function toAgentAction(action: z.infer<typeof agentResponseSchema>["actions"][nu
     };
   }
 
+  if (action.type === "time_start") {
+    return {
+      type: "time_start",
+      basket: emptyToUndefined(action.time_basket) as TaskBasket | undefined,
+      taskId: emptyToUndefined(action.time_task_id || action.task_id),
+      title: emptyToUndefined(action.time_title || action.task_title || action.title),
+      participant: emptyToUndefined(action.time_participant || action.task_participant) as AgentParticipant | undefined,
+    };
+  }
+
+  if (action.type === "time_stop") {
+    return {
+      type: "time_stop",
+      participant: emptyToUndefined(action.time_participant) as AgentParticipant | undefined,
+    };
+  }
+
+  if (action.type === "time_status") {
+    return {
+      type: "time_status",
+      participant: emptyToUndefined(action.time_participant) as AgentParticipant | undefined,
+    };
+  }
+
+  if (action.type === "time_summary") {
+    if (!action.time_scope_start || !action.time_scope_end) {
+      return {
+        type: "ask_clarification",
+        message: action.message || "За який період показати трекінг часу?",
+      };
+    }
+
+    return {
+      type: "time_summary",
+      startsAt: action.time_scope_start,
+      endsAt: action.time_scope_end,
+      participant: emptyToUndefined(action.time_participant) as AgentParticipant | undefined,
+    };
+  }
+
   return undefined;
 }
 
@@ -534,6 +625,12 @@ const agentPlanSchema = {
           "task_basket",
           "task_participant",
           "target_task_basket",
+          "time_basket",
+          "time_title",
+          "time_participant",
+          "time_task_id",
+          "time_scope_start",
+          "time_scope_end",
         ],
         properties: {
           type: {
@@ -550,6 +647,10 @@ const agentPlanSchema = {
               "task_list",
               "task_move_recent",
               "task_close_recent",
+              "time_start",
+              "time_stop",
+              "time_status",
+              "time_summary",
             ],
           },
           message: { type: "string" },
@@ -601,6 +702,15 @@ const agentPlanSchema = {
             type: "string",
             enum: ["911", "operational", "deep_work", "random", "personal_brand", "other", ""],
           },
+          time_basket: {
+            type: "string",
+            enum: ["911", "operational", "deep_work", "random", "personal_brand", "other", ""],
+          },
+          time_title: { type: "string" },
+          time_participant: { type: "string", enum: ["vania", "nastia", "both", ""] },
+          time_task_id: { type: "string" },
+          time_scope_start: { type: "string" },
+          time_scope_end: { type: "string" },
         },
       },
     },
