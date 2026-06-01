@@ -337,7 +337,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     const now = DateTime.now().setZone(config.timezone);
     const nearbyActivities = await plannedActivities.listBetween({
       startsAt: toIso(now.startOf("week").minus({ weeks: 1 })),
-      endsAt: toIso(now.endOf("week").plus({ weeks: 2 })),
+      endsAt: toIso(now.plus({ years: 1 }).endOf("day")),
     });
     const recentActivities = recentActivitiesByUser.get(userContextKey(ctx)) ?? [];
     const activeActivities = [...recentActivities, ...nearbyActivities]
@@ -346,7 +346,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
       new Map(activeActivities.map((activity) => [activity.id, activity])).values(),
     )
       .sort((left, right) => Date.parse(left.startsAt) - Date.parse(right.startsAt))
-      .slice(0, 40);
+      .slice(0, 100);
 
     rememberActivities(ctx, uniqueActivities);
 
