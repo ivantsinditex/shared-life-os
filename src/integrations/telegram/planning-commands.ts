@@ -68,6 +68,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
   const pendingDeletes = new Map<string, PlannedActivity>();
   const pendingBulkDeletes = new Map<string, PendingBulkDelete>();
   const pendingClarifications = new Map<string, PendingClarification>();
+  const recentActivitiesByUser = new Map<string, PlannedActivity[]>();
 
   bot.command("start", async (ctx) => {
     await ctx.reply(
@@ -248,6 +249,10 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
       return;
     }
 
+    if (await maybeHandleContextualDelete(ctx, text)) {
+      return;
+    }
+
     const parsed = await planningTextParser.parse({
       text,
       timezone: config.timezone,
@@ -267,6 +272,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     if (parsed.action === "list") {
       const activities = await listActivitiesByScope(plannedActivities, parsed.scope, config.timezone);
 
+      rememberActivities(ctx, activities);
       await replyWithActivitySummary(ctx, "AI list result", activities, config.timezone);
       return;
     }
@@ -290,6 +296,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
         deleteCandidates: deletionPlan.deleteCandidates,
         keptActivities: deletionPlan.keptActivities,
       });
+      rememberActivities(ctx, [...deletionPlan.keptActivities, ...deletionPlan.deleteCandidates]);
 
       await ctx.reply(formatBulkDeletePreview(deletionPlan, config.timezone), {
         reply_markup: new InlineKeyboard()
@@ -339,6 +346,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
       plannedActivities,
     });
 
+    rememberActivities(ctx, [synced]);
     await ctx.reply(formatActivitySyncResult(synced, formatActivitySaved(synced)));
   });
 
@@ -408,6 +416,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
       plannedActivities,
     });
 
+    rememberActivities(ctx, [synced]);
     await ctx.reply(formatActivitySyncResult(synced, formatActivityUpdated(synced)));
   });
 
@@ -592,6 +601,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
       endsAt: toIso(now.endOf("day")),
     });
 
+    rememberActivities(ctx, activities);
     await replyWithActivitySummary(ctx, "Today", activities, config.timezone);
   });
 
@@ -602,8 +612,58 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
       endsAt: toIso(now.endOf("week")),
     });
 
+    rememberActivities(ctx, activities);
     await replyWithActivitySummary(ctx, "This week", activities, config.timezone);
   });
+
+  bot.on("message:text", async (ctx) => {
+    const text = ctx.message.text.trim();
+
+    if (!text || text.startsWith("/")) {
+      return;
+    }
+
+    await handleNaturalPlanningText(ctx, text);
+  });
+
+  function rememberActivities(ctx: Context, activities: PlannedActivity[]): void {
+    const key = userContextKey(ctx);
+    const existing = recentActivitiesByUser.get(key) ?? [];
+    const activeActivities = activities.filter((activity) => activity.syncStatus !== "deleted");
+    const merged = [...activeActivities, ...existing];
+    const unique = Array.from(new Map(merged.map((activity) => [activity.id, activity])).values());
+
+    recentActivitiesByUser.set(
+      key,
+      unique
+        .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt))
+        .slice(0, 12),
+    );
+  }
+
+  async function maybeHandleContextualDelete(ctx: Context, text: string): Promise<boolean> {
+    if (!looksLikeDeleteRequest(text) || !looksLikeContextualReference(text)) {
+      return false;
+    }
+
+    const candidates = (recentActivitiesByUser.get(userContextKey(ctx)) ?? [])
+      .filter((activity) => activity.syncStatus !== "deleted");
+    const activity = selectContextualActivity(candidates, text, config.timezone);
+
+    if (!activity) {
+      return false;
+    }
+
+    const token = randomUUID();
+    pendingDeletes.set(token, activity);
+
+    await ctx.reply(["Delete this planned activity?", "", formatActivitySaved(activity)].join("\n"), {
+      reply_markup: new InlineKeyboard()
+        .text("Delete", `plan:delete-confirm:${token}`)
+        .text("Cancel", `plan:delete-cancel:${token}`),
+    });
+    return true;
+  }
 }
 
 type PendingUpdate = {
@@ -620,6 +680,108 @@ type PendingClarification = {
   draft: ParsedPlanningDraft;
   missingFields: ParsedPlanningMissingField[];
 };
+
+function userContextKey(ctx: Context): string {
+  return String(ctx.from?.id ?? ctx.chat?.id ?? "unknown");
+}
+
+function looksLikeDeleteRequest(text: string): boolean {
+  const normalized = normalizeText(text);
+
+  return [
+    "видал",
+    "выдал",
+    "удал",
+    "прибери",
+    "прибрать",
+    "delete",
+    "remove",
+  ].some((token) => normalized.includes(token));
+}
+
+function looksLikeContextualReference(text: string): boolean {
+  const normalized = normalizeText(text);
+
+  return [
+    "це",
+    "это",
+    "this",
+    "that",
+    "остан",
+    "last",
+    "одне",
+    "одну",
+    "один",
+    "one",
+    "його",
+    "її",
+    "его",
+    "ее",
+  ].some((token) => normalized.includes(token));
+}
+
+function selectContextualActivity(
+  candidates: PlannedActivity[],
+  text: string,
+  timezone: string,
+): PlannedActivity | undefined {
+  const normalized = normalizeText(text);
+  const todayOnly = normalized.includes("сьогодні") || normalized.includes("сегодня") || normalized.includes("today");
+  const ranked = candidates
+    .filter((activity) => !todayOnly || isToday(activity, timezone))
+    .map((activity) => ({
+      activity,
+      score: scoreContextualActivity(activity, normalized, timezone),
+    }))
+    .filter((candidate) => candidate.score > 0)
+    .sort((left, right) => right.score - left.score);
+
+  return ranked[0]?.activity;
+}
+
+function scoreContextualActivity(activity: PlannedActivity, normalizedText: string, timezone: string): number {
+  let score = 1;
+  const normalizedTitle = normalizeText(activity.title);
+
+  if (normalizedText.includes("остан") || normalizedText.includes("last")) {
+    score += 5;
+  }
+
+  if (normalizedText.includes("трен") || normalizedText.includes("нав") || normalizedText.includes("workout")) {
+    score += activity.category === "sport" ? 4 : 0;
+  }
+
+  if (normalizedText.includes("йог") || normalizedText.includes("yoga")) {
+    score += normalizedTitle.includes("йог") || normalizedTitle.includes("yoga") ? 6 : 0;
+  }
+
+  if (normalizedText.includes("воркаут") || normalizedText.includes("workout")) {
+    score += normalizedTitle.includes("воркаут") || normalizedTitle.includes("workout") ? 6 : 0;
+  }
+
+  if (normalizedText.includes("сьогодні") || normalizedText.includes("сегодня") || normalizedText.includes("today")) {
+    score += isToday(activity, timezone) ? 3 : -10;
+  }
+
+  score += Math.max(0, 4 - hoursSinceUpdate(activity));
+
+  return score;
+}
+
+function isToday(activity: PlannedActivity, timezone: string): boolean {
+  const start = DateTime.fromISO(activity.startsAt).setZone(timezone);
+  const now = DateTime.now().setZone(timezone);
+
+  return start.hasSame(now, "day");
+}
+
+function hoursSinceUpdate(activity: PlannedActivity): number {
+  return Math.max(0, (Date.now() - Date.parse(activity.updatedAt)) / 3_600_000);
+}
+
+function normalizeText(value: string): string {
+  return value.toLowerCase().replace(/ё/g, "е").replace(/і/g, "и").replace(/ї/g, "и");
+}
 
 async function transcribeTelegramVoice(
   ctx: Context,

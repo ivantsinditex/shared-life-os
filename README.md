@@ -54,6 +54,7 @@ Use `/today` or `/week` to see short ids and delete buttons. Use `/sync_failed` 
 Voice messages can contain the same text, for example: `/plan Workout | vania | sport | 2026-06-01 08:00 | 60 | busy_only`.
 They can also use natural language, for example: `Plan workout for Vania tomorrow at 18:30 for 60 minutes, busy only`.
 If the bot is missing participant, category, or privacy, it will keep a draft and ask a follow-up question with buttons.
+The bot also keeps a short per-user conversation context, so follow-up phrases like `delete this one` or `remove the last workout today` can refer to recently created or listed activities.
 Natural-language voice also supports safe previews for list and bulk delete requests, for example:
 
 ```text
