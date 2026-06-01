@@ -59,6 +59,7 @@ Natural-language voice also supports safe previews for list and bulk delete requ
 Show my events today
 Delete all events today
 Delete everything today except one workout
+Delete all events today except Nastia yoga and my workout at 18:00
 ```
 
 ## Planned Activity Concept

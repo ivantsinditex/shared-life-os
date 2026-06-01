@@ -238,7 +238,12 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
 
     if (parsed.action === "delete_many") {
       const activities = await listActivitiesByScope(plannedActivities, parsed.scope, config.timezone);
-      const deletionPlan = planBulkDelete(activities, parsed.keep);
+      const deletionPlan = planBulkDelete(activities, parsed.keepRules, config.timezone);
+
+      if (deletionPlan.unmatchedKeepRules.length > 0) {
+        await ctx.reply(formatUnmatchedKeepRules(deletionPlan.unmatchedKeepRules));
+        return;
+      }
 
       if (deletionPlan.deleteCandidates.length === 0) {
         await ctx.reply("I found no matching activities to delete.");
@@ -651,37 +656,74 @@ async function listActivitiesByScope(
 
 function planBulkDelete(
   activities: PlannedActivity[],
-  keep: ParsedPlanningKeepRule,
-): { deleteCandidates: PlannedActivity[]; keptActivities: PlannedActivity[] } {
-  if (keep.count <= 0) {
+  keepRules: ParsedPlanningKeepRule[],
+  timezone: string,
+): {
+  deleteCandidates: PlannedActivity[];
+  keptActivities: PlannedActivity[];
+  unmatchedKeepRules: ParsedPlanningKeepRule[];
+} {
+  const activeKeepRules = keepRules.filter((rule) => rule.count > 0);
+
+  if (activeKeepRules.length === 0) {
     return {
       deleteCandidates: activities,
       keptActivities: [],
+      unmatchedKeepRules: [],
     };
   }
 
   const sortedActivities = [...activities].sort((left, right) => Date.parse(left.startsAt) - Date.parse(right.startsAt));
-  const keptActivities = sortedActivities.filter((activity) => matchesKeepRule(activity, keep)).slice(0, keep.count);
-  const keptIds = new Set(keptActivities.map((activity) => activity.id));
+  const keptActivities: PlannedActivity[] = [];
+  const keptIds = new Set<string>();
+  const unmatchedKeepRules: ParsedPlanningKeepRule[] = [];
+
+  activeKeepRules.forEach((rule) => {
+    const matches = sortedActivities
+      .filter((activity) => !keptIds.has(activity.id))
+      .filter((activity) => matchesKeepRule(activity, rule, timezone));
+    const selected = matches.slice(0, rule.count);
+
+    if (selected.length < rule.count) {
+      unmatchedKeepRules.push(rule);
+    }
+
+    selected.forEach((activity) => {
+      keptIds.add(activity.id);
+      keptActivities.push(activity);
+    });
+  });
 
   return {
     deleteCandidates: sortedActivities.filter((activity) => !keptIds.has(activity.id)),
     keptActivities,
+    unmatchedKeepRules,
   };
 }
 
-function matchesKeepRule(activity: PlannedActivity, keep: ParsedPlanningKeepRule): boolean {
+function matchesKeepRule(
+  activity: PlannedActivity,
+  keep: ParsedPlanningKeepRule,
+  timezone: string,
+): boolean {
   const participantMatches = !keep.participant || activity.participant === keep.participant;
   const categoryMatches = !keep.category || activity.category === keep.category;
   const titleMatches =
     !keep.titleContains ||
     activity.title.toLowerCase().includes(keep.titleContains.toLowerCase());
+  const startTimeMatches =
+    !keep.startTime ||
+    DateTime.fromISO(activity.startsAt).setZone(timezone).toFormat("HH:mm") === keep.startTime;
 
-  return participantMatches && categoryMatches && titleMatches;
+  return participantMatches && categoryMatches && titleMatches && startTimeMatches;
 }
 
 function formatBulkDeletePreview(
-  plan: { deleteCandidates: PlannedActivity[]; keptActivities: PlannedActivity[] },
+  plan: {
+    deleteCandidates: PlannedActivity[];
+    keptActivities: PlannedActivity[];
+    unmatchedKeepRules: ParsedPlanningKeepRule[];
+  },
   timezone: string,
 ): string {
   const lines = [
@@ -695,6 +737,28 @@ function formatBulkDeletePreview(
   lines.push("", "Deleting:", ...formatActivityLines(plan.deleteCandidates, timezone));
 
   return lines.join("\n");
+}
+
+function formatUnmatchedKeepRules(rules: ParsedPlanningKeepRule[]): string {
+  return [
+    "I found matching activities to delete, but could not satisfy every keep exception.",
+    "Nothing was deleted.",
+    "",
+    "Missing keep matches:",
+    ...rules.map((rule, index) => `${index + 1}. ${formatKeepRule(rule)}`),
+  ].join("\n");
+}
+
+function formatKeepRule(rule: ParsedPlanningKeepRule): string {
+  return [
+    `keep ${rule.count}`,
+    rule.participant ? `participant=${rule.participant}` : "",
+    rule.category ? `category=${rule.category}` : "",
+    rule.titleContains ? `title contains "${rule.titleContains}"` : "",
+    rule.startTime ? `time=${rule.startTime}` : "",
+  ]
+    .filter(Boolean)
+    .join(", ");
 }
 
 function formatActivityLines(activities: PlannedActivity[], timezone: string): string[] {

@@ -29,7 +29,7 @@ export type ParsedNaturalPlanningCommand =
   | {
       action: "delete_many";
       scope: ParsedPlanningScope;
-      keep: ParsedPlanningKeepRule;
+      keepRules: ParsedPlanningKeepRule[];
     }
   | {
       action: "unknown";
@@ -62,6 +62,7 @@ export type ParsedPlanningKeepRule = {
   participant?: ParsedParticipant;
   category?: ParsedCategory;
   titleContains?: string;
+  startTime?: string;
 };
 
 export type NaturalPlanningParserInput = {
@@ -111,21 +112,26 @@ const parsedResponseSchema = z.object({
     "",
   ]),
   scope_title_contains: z.string(),
-  keep_count: z.number().int(),
-  keep_participant: z.enum(["vania", "nastia", "both", ""]),
-  keep_category: z.enum([
-    "sport",
-    "work",
-    "learning",
-    "reading",
-    "dogs",
-    "horse",
-    "care",
-    "together",
-    "other",
-    "",
-  ]),
-  keep_title_contains: z.string(),
+  keep_rules: z.array(
+    z.object({
+      count: z.number().int(),
+      participant: z.enum(["vania", "nastia", "both", ""]),
+      category: z.enum([
+        "sport",
+        "work",
+        "learning",
+        "reading",
+        "dogs",
+        "horse",
+        "care",
+        "together",
+        "other",
+        "",
+      ]),
+      title_contains: z.string(),
+      start_time: z.string(),
+    }),
+  ),
   reason: z.string(),
 });
 
@@ -217,7 +223,10 @@ function buildSystemPrompt(timezone: string, now: string): string {
     "For updates, action must be update only when a short id is explicitly present.",
     "For list or delete_many, scope_start and scope_end must describe the requested local time window.",
     "For 'today', use today's 00:00 through tomorrow's 00:00. For 'this week', use the local Monday 00:00 through next Monday 00:00.",
-    "For delete_many phrases like 'except one workout', fill keep_count as 1 and keep_category or keep_title_contains accordingly.",
+    "For delete_many phrases with exceptions, put each exception into keep_rules.",
+    "For 'except one workout', create one keep rule with count 1 and title_contains workout or category sport when appropriate.",
+    "For 'except Nastia yoga and one workout at 18', create two keep rules: one for Nastia yoga, one for workout with start_time 18:00.",
+    "Use start_time only when the user names a time for the exception. Format it as HH:mm.",
     "Use delete_many only for deletion requests. The application will ask for confirmation before deleting.",
     "If required planning details are too ambiguous, action must be unknown and reason must explain what is missing.",
   ].join("\n");
@@ -271,12 +280,13 @@ function toDomainParsedCommand(
     return {
       action: "delete_many",
       scope,
-      keep: {
-        count: parsed.keep_count,
-        participant: emptyToUndefined(parsed.keep_participant) as ParsedParticipant | undefined,
-        category: emptyToUndefined(parsed.keep_category) as ParsedCategory | undefined,
-        titleContains: emptyToUndefined(parsed.keep_title_contains),
-      },
+      keepRules: parsed.keep_rules.map((rule) => ({
+        count: rule.count,
+        participant: emptyToUndefined(rule.participant) as ParsedParticipant | undefined,
+        category: emptyToUndefined(rule.category) as ParsedCategory | undefined,
+        titleContains: emptyToUndefined(rule.title_contains),
+        startTime: emptyToUndefined(rule.start_time),
+      })),
     };
   }
 
@@ -340,10 +350,7 @@ const planningCommandSchema = {
     "scope_participant",
     "scope_category",
     "scope_title_contains",
-    "keep_count",
-    "keep_participant",
-    "keep_category",
-    "keep_title_contains",
+    "keep_rules",
     "reason",
   ],
   properties: {
@@ -401,23 +408,38 @@ const planningCommandSchema = {
       type: "string",
       description: "Optional case-insensitive title text filter for list/delete_many.",
     },
-    keep_count: {
-      type: "integer",
-      description: "How many matching activities to keep for delete_many exceptions, otherwise 0.",
-    },
-    keep_participant: {
-      type: "string",
-      enum: ["vania", "nastia", "both", ""],
-      description: "Optional participant filter for keep exception.",
-    },
-    keep_category: {
-      type: "string",
-      enum: ["sport", "work", "learning", "reading", "dogs", "horse", "care", "together", "other", ""],
-      description: "Optional category filter for keep exception.",
-    },
-    keep_title_contains: {
-      type: "string",
-      description: "Optional case-insensitive title text filter for keep exception.",
+    keep_rules: {
+      type: "array",
+      description: "Exception rules for delete_many. Empty when there are no exceptions.",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["count", "participant", "category", "title_contains", "start_time"],
+        properties: {
+          count: {
+            type: "integer",
+            description: "How many matching activities to keep for this exception rule.",
+          },
+          participant: {
+            type: "string",
+            enum: ["vania", "nastia", "both", ""],
+            description: "Optional participant filter for this keep exception.",
+          },
+          category: {
+            type: "string",
+            enum: ["sport", "work", "learning", "reading", "dogs", "horse", "care", "together", "other", ""],
+            description: "Optional category filter for this keep exception.",
+          },
+          title_contains: {
+            type: "string",
+            description: "Optional case-insensitive title text filter for this keep exception.",
+          },
+          start_time: {
+            type: "string",
+            description: "Optional local start time filter in HH:mm for this keep exception.",
+          },
+        },
+      },
     },
     reason: {
       type: "string",
