@@ -372,7 +372,9 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
       currentParticipant: getCurrentParticipant(ctx, config),
     });
 
-    if (result.reply) {
+    const actionableActions = result.actions.filter((action) => action.type !== "answer");
+
+    if (result.reply && actionableActions.length === 0) {
       await ctx.reply(result.reply);
     }
 
@@ -380,7 +382,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
       return Boolean(result.reply);
     }
 
-    for (const action of result.actions) {
+    for (const action of actionableActions.length > 0 ? actionableActions : result.actions) {
       await handleAgentAction(ctx, action);
     }
 
