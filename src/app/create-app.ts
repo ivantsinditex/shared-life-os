@@ -1,6 +1,7 @@
 import { Bot } from "grammy";
 
 import type { AppConfig } from "../config/config.js";
+import { createPlanningTextParserGateway } from "../integrations/ai/openai-planning-parser-gateway.js";
 import { createCalendarGateway } from "../integrations/calendar/google-calendar-gateway.js";
 import { createPlanningCommands } from "../integrations/telegram/planning-commands.js";
 import { createVoiceTranscriptionGateway } from "../integrations/voice/openai-transcription-gateway.js";
@@ -17,6 +18,7 @@ export function createApp(config: AppConfig): App {
   const plannedActivities = new FilePlannedActivityRepository(config.dataDir);
   const calendar = createCalendarGateway(config);
   const voiceTranscription = createVoiceTranscriptionGateway(config);
+  const planningTextParser = createPlanningTextParserGateway(config);
 
   createPlanningCommands({
     bot,
@@ -24,6 +26,7 @@ export function createApp(config: AppConfig): App {
     config,
     logger,
     plannedActivities,
+    planningTextParser,
     voiceTranscription,
   });
 

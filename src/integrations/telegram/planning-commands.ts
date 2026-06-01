@@ -24,6 +24,10 @@ import {
   toGoogleVisibility,
 } from "../../domain/privacy-rendering.js";
 import type { CalendarBusySlot, CalendarGateway } from "../calendar/google-calendar-gateway.js";
+import type {
+  ParsedNaturalPlanningCommand,
+  PlanningTextParserGateway,
+} from "../ai/openai-planning-parser-gateway.js";
 import type { VoiceTranscriptionGateway } from "../voice/openai-transcription-gateway.js";
 import type { NewPlannedActivity, PlannedActivity } from "../../domain/planned-activity.js";
 import type { PlannedActivityRepository } from "../../domain/planned-activity.js";
@@ -35,11 +39,20 @@ type PlanningCommandDeps = {
   config: AppConfig;
   logger: Logger;
   plannedActivities: PlannedActivityRepository;
+  planningTextParser: PlanningTextParserGateway;
   voiceTranscription: VoiceTranscriptionGateway;
 };
 
 export function createPlanningCommands(deps: PlanningCommandDeps): void {
-  const { bot, calendar, config, logger, plannedActivities, voiceTranscription } = deps;
+  const {
+    bot,
+    calendar,
+    config,
+    logger,
+    plannedActivities,
+    planningTextParser,
+    voiceTranscription,
+  } = deps;
   const pendingPlans = new Map<string, NewPlannedActivity>();
   const pendingUpdates = new Map<string, PendingUpdate>();
   const pendingDeletes = new Map<string, PlannedActivity>();
@@ -57,7 +70,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
         "/today - show today's planned activities",
         "/week - show this week's planned activities",
         "",
-        "Voice messages can contain /plan or /update text too.",
+        "Voice messages can contain natural planning text too.",
       ].join("\n"),
     );
   });
@@ -185,12 +198,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
         return;
       }
 
-      await ctx.reply(
-        [
-          "I understood the audio, but do not know which action to run yet.",
-          "Please say or include /plan ... or /update ... in the voice message.",
-        ].join("\n"),
-      );
+      await handleNaturalPlanningText(ctx, transcript);
     } catch (error) {
       logger.warn("Voice command failed", {
         error: error instanceof Error ? error.message : String(error),
@@ -200,6 +208,35 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
       await ctx.reply("Voice processing failed. Please try again or send the command as text.");
     }
   });
+
+  const handleNaturalPlanningText = async (ctx: Context, text: string): Promise<void> => {
+    if (!planningTextParser.isEnabled()) {
+      await ctx.reply("Natural-language planning is not configured yet. Set OPENAI_API_KEY and restart the bot.");
+      return;
+    }
+
+    const parsed = await planningTextParser.parse({
+      text,
+      timezone: config.timezone,
+      now: DateTime.now().setZone(config.timezone).toFormat("yyyy-MM-dd HH:mm"),
+    });
+
+    if (parsed.action === "unknown") {
+      await ctx.reply(`I could not turn that into a plan yet: ${parsed.reason}`);
+      return;
+    }
+
+    const commandInput = formatNaturalPlanningCommand(parsed);
+
+    await ctx.reply(`AI parsed command:\n${commandInput}`);
+
+    if (parsed.action === "plan") {
+      await handlePlanInput(ctx, commandInput);
+      return;
+    }
+
+    await handleUpdateInput(ctx, commandInput);
+  };
 
   bot.callbackQuery(/^plan:create:(.+)$/, async (ctx) => {
     const token = ctx.match[1];
@@ -493,6 +530,27 @@ function routeVoiceCommand(transcript: string):
   }
 
   return { command: "unknown" };
+}
+
+function formatNaturalPlanningCommand(parsed: ParsedNaturalPlanningCommand): string {
+  if (parsed.action === "unknown") {
+    return "";
+  }
+
+  const planParts = [
+    parsed.title,
+    parsed.participant,
+    parsed.category,
+    parsed.start,
+    String(parsed.durationMinutes),
+    parsed.privacy,
+  ];
+
+  if (parsed.action === "update") {
+    return [parsed.shortId, ...planParts].join(" | ");
+  }
+
+  return planParts.join(" | ");
 }
 
 async function checkPlanConflicts(

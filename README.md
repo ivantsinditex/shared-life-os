@@ -17,7 +17,8 @@ This repository currently covers the T1-T4 foundation:
 - Google Calendar free/busy checks for manually-created calendar blocks;
 - Google Calendar gateway for event creation when credentials are configured;
 - retry flow for locally saved activities whose calendar sync failed;
-- voice message transcription for `/plan` and `/update` commands when OpenAI is configured.
+- voice message transcription for `/plan` and `/update` commands when OpenAI is configured;
+- natural-language AI parsing for voice planning requests.
 
 ## Setup
 
@@ -51,6 +52,7 @@ Use `/today` or `/week` to see short ids and delete buttons. Use `/sync_failed` 
 ```
 
 Voice messages can contain the same text, for example: `/plan Workout | vania | sport | 2026-06-01 08:00 | 60 | busy_only`.
+They can also use natural language, for example: `Plan workout for Vania tomorrow at 18:30 for 60 minutes, busy only`.
 
 ## Planned Activity Concept
 
@@ -72,10 +74,10 @@ That calendar must be shared with the service account email using **Make changes
 
 ## Voice Access
 
-Voice transcription is optional and uses OpenAI. Add `OPENAI_API_KEY` to `.env` to enable it.
+Voice transcription and natural-language planning are optional and use OpenAI. Add `OPENAI_API_KEY` to `.env` to enable them.
 
 ## Next Implementation Slice
 
 1. Richer guided Telegram planning flow with follow-up questions for missing fields.
-2. Natural-language AI parser for voice/text commands.
+2. Natural-language parsing for text messages, not only voice.
 3. Monthly analytics foundation.

@@ -9,6 +9,7 @@ const configSchema = z.object({
   GOOGLE_PRIVATE_KEY: z.string().optional(),
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_TRANSCRIPTION_MODEL: z.string().default("gpt-4o-mini-transcribe"),
+  OPENAI_PLANNING_MODEL: z.string().default("gpt-4o-mini"),
 });
 
 export type AppConfig = {
@@ -20,6 +21,7 @@ export type AppConfig = {
   googlePrivateKey?: string;
   openAiApiKey?: string;
   openAiTranscriptionModel: string;
+  openAiPlanningModel: string;
   users: KnownUser[];
 };
 
@@ -41,6 +43,7 @@ export function loadConfig(): AppConfig {
     googlePrivateKey: env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, "\n"),
     openAiApiKey: env.OPENAI_API_KEY,
     openAiTranscriptionModel: env.OPENAI_TRANSCRIPTION_MODEL,
+    openAiPlanningModel: env.OPENAI_PLANNING_MODEL,
     users: [
       {
         key: "vania",
