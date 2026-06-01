@@ -309,11 +309,13 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
   };
 
   async function handleAgentText(ctx: Context, text: string): Promise<boolean> {
+    const contextActivities = await loadAgentContextActivities(ctx);
+
     const result = await assistantAgent.respond({
       text,
       timezone: config.timezone,
       now: DateTime.now().setZone(config.timezone).toFormat("yyyy-MM-dd HH:mm"),
-      recentActivities: recentActivitiesByUser.get(userContextKey(ctx)) ?? [],
+      recentActivities: contextActivities,
     });
 
     if (result.reply) {
@@ -329,6 +331,26 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     }
 
     return true;
+  }
+
+  async function loadAgentContextActivities(ctx: Context): Promise<PlannedActivity[]> {
+    const now = DateTime.now().setZone(config.timezone);
+    const nearbyActivities = await plannedActivities.listBetween({
+      startsAt: toIso(now.startOf("week").minus({ weeks: 1 })),
+      endsAt: toIso(now.endOf("week").plus({ weeks: 2 })),
+    });
+    const recentActivities = recentActivitiesByUser.get(userContextKey(ctx)) ?? [];
+    const activeActivities = [...recentActivities, ...nearbyActivities]
+      .filter((activity) => activity.syncStatus !== "deleted");
+    const uniqueActivities = Array.from(
+      new Map(activeActivities.map((activity) => [activity.id, activity])).values(),
+    )
+      .sort((left, right) => Date.parse(left.startsAt) - Date.parse(right.startsAt))
+      .slice(0, 40);
+
+    rememberActivities(ctx, uniqueActivities);
+
+    return uniqueActivities;
   }
 
   async function handleAgentAction(ctx: Context, action: AssistantAgentAction): Promise<void> {
