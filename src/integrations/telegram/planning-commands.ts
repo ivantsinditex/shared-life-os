@@ -45,6 +45,13 @@ import {
   type PlannedActivity,
 } from "../../domain/planned-activity.js";
 import type { PlannedActivityRepository } from "../../domain/planned-activity.js";
+import {
+  formatTaskClosed,
+  formatTaskList,
+  formatTaskMoved,
+  formatTaskSaved,
+} from "../../domain/task-formatting.js";
+import type { WorkTask, WorkTaskRepository } from "../../domain/task.js";
 import type { Logger } from "../../utils/logger.js";
 
 type PlanningCommandDeps = {
@@ -56,6 +63,7 @@ type PlanningCommandDeps = {
   plannedActivities: PlannedActivityRepository;
   planningTextParser: PlanningTextParserGateway;
   voiceTranscription: VoiceTranscriptionGateway;
+  workTasks: WorkTaskRepository;
 };
 
 export function createPlanningCommands(deps: PlanningCommandDeps): void {
@@ -68,6 +76,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     plannedActivities,
     planningTextParser,
     voiceTranscription,
+    workTasks,
   } = deps;
   const pendingPlans = new Map<string, NewPlannedActivity>();
   const pendingUpdates = new Map<string, PendingUpdate>();
@@ -75,6 +84,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
   const pendingBulkDeletes = new Map<string, PendingBulkDelete>();
   const pendingClarifications = new Map<string, PendingClarification>();
   const recentActivitiesByUser = new Map<string, PlannedActivity[]>();
+  const recentTasksByUser = new Map<string, WorkTask[]>();
 
   bot.command("start", async (ctx) => {
     await ctx.reply(
@@ -320,6 +330,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
       timezone: config.timezone,
       now: DateTime.now().setZone(config.timezone).toFormat("yyyy-MM-dd HH:mm"),
       recentActivities: contextActivities,
+      openTasks: await loadAgentContextTasks(ctx),
     });
 
     if (result.reply) {
@@ -335,6 +346,20 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     }
 
     return true;
+  }
+
+  async function loadAgentContextTasks(ctx: Context): Promise<WorkTask[]> {
+    const openTasks = await workTasks.list({ status: "open" });
+    const recentTasks = recentTasksByUser.get(userContextKey(ctx)) ?? [];
+    const uniqueTasks = Array.from(
+      new Map([...recentTasks, ...openTasks].map((task) => [task.id, task])).values(),
+    )
+      .sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt))
+      .slice(0, 100);
+
+    rememberTasks(ctx, uniqueTasks);
+
+    return uniqueTasks;
   }
 
   async function loadAgentContextActivities(ctx: Context): Promise<PlannedActivity[]> {
@@ -395,6 +420,63 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
 
     if (action.type === "draft_update_recent") {
       await previewRecentUpdate(ctx, action);
+      return;
+    }
+
+    if (action.type === "task_create") {
+      const task = await workTasks.create({
+        title: action.title,
+        basket: action.basket,
+        participant: action.participant,
+      });
+
+      rememberTasks(ctx, [task]);
+      await ctx.reply(formatTaskSaved(task));
+      return;
+    }
+
+    if (action.type === "task_list") {
+      const tasks = await workTasks.list({ basket: action.basket, status: "open" });
+
+      rememberTasks(ctx, tasks);
+      await ctx.reply(formatTaskList(action.basket ? `Open tasks in ${action.basket}` : "Open tasks", tasks));
+      return;
+    }
+
+    if (action.type === "task_move_recent") {
+      const task = findRecentTask(ctx, action.taskId, action.titleContains);
+
+      if (!task) {
+        await ctx.reply("I could not find a matching open task to move.");
+        return;
+      }
+
+      const updated = await workTasks.update({
+        ...task,
+        basket: action.basket,
+      });
+
+      rememberTasks(ctx, [updated]);
+      await ctx.reply(formatTaskMoved(updated));
+      return;
+    }
+
+    if (action.type === "task_close_recent") {
+      const task = findRecentTask(ctx, action.taskId, action.titleContains);
+
+      if (!task) {
+        await ctx.reply("I could not find a matching open task to close.");
+        return;
+      }
+
+      const updated = await workTasks.update({
+        ...task,
+        status: "closed",
+        closedAt: new Date().toISOString(),
+      });
+
+      rememberTasks(ctx, [updated]);
+      await ctx.reply(formatTaskClosed(updated));
     }
   }
 
@@ -730,6 +812,39 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
         .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt))
         .slice(0, 12),
     );
+  }
+
+  function rememberTasks(ctx: Context, tasks: WorkTask[]): void {
+    const key = userContextKey(ctx);
+    const existing = recentTasksByUser.get(key) ?? [];
+    const openTasks = tasks.filter((task) => task.status === "open");
+    const merged = [...openTasks, ...existing];
+    const unique = Array.from(new Map(merged.map((task) => [task.id, task])).values());
+
+    recentTasksByUser.set(
+      key,
+      unique
+        .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt))
+        .slice(0, 20),
+    );
+  }
+
+  function findRecentTask(ctx: Context, taskId?: string, titleContains?: string): WorkTask | undefined {
+    const candidates = (recentTasksByUser.get(userContextKey(ctx)) ?? [])
+      .filter((task) => task.status === "open");
+
+    if (taskId) {
+      return candidates.find((task) => task.id === taskId || task.id.startsWith(taskId));
+    }
+
+    if (titleContains) {
+      const normalized = titleContains.toLowerCase();
+      const matches = candidates.filter((task) => task.title.toLowerCase().includes(normalized));
+
+      return matches.length === 1 ? matches[0] : undefined;
+    }
+
+    return candidates[0];
   }
 
   async function maybeHandleContextualDelete(ctx: Context, text: string): Promise<boolean> {

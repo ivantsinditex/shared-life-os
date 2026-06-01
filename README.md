@@ -93,6 +93,15 @@ Examples:
 /task_close ab12cd34
 ```
 
+The assistant agent can also control task baskets from natural text or voice, for example:
+
+```text
+Add "reply to urgent client" to 911 for Vania
+Show 911 tasks
+Move the client reply task to deep work
+Close the last 911 task
+```
+
 ## Planned Activity Concept
 
 A planned activity is the product source of truth for calendar planning. Google Calendar is the synchronized availability surface, not the only place where product meaning lives.

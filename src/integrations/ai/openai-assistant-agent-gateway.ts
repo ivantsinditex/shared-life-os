@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import type { AppConfig } from "../../config/config.js";
 import type { PlannedActivity } from "../../domain/planned-activity.js";
+import type { TaskBasket, WorkTask } from "../../domain/task.js";
 import type {
   ParsedPlanningKeepRule,
   ParsedPlanningScope,
@@ -25,6 +26,7 @@ export type AssistantAgentInput = {
   timezone: string;
   now: string;
   recentActivities: PlannedActivity[];
+  openTasks: WorkTask[];
 };
 
 export type AssistantAgentResult = {
@@ -74,6 +76,27 @@ export type AssistantAgentAction =
   | {
       type: "ask_clarification";
       message: string;
+    }
+  | {
+      type: "task_create";
+      title: string;
+      basket: TaskBasket;
+      participant?: AgentParticipant;
+    }
+  | {
+      type: "task_list";
+      basket?: TaskBasket;
+    }
+  | {
+      type: "task_move_recent";
+      taskId?: string;
+      titleContains?: string;
+      basket: TaskBasket;
+    }
+  | {
+      type: "task_close_recent";
+      taskId?: string;
+      titleContains?: string;
     };
 
 export interface AssistantAgentGateway {
@@ -93,6 +116,10 @@ const agentResponseSchema = z.object({
         "draft_delete_recent",
         "draft_update_recent",
         "ask_clarification",
+        "task_create",
+        "task_list",
+        "task_move_recent",
+        "task_close_recent",
       ]),
       message: z.string(),
       activity_id: z.string(),
@@ -150,6 +177,11 @@ const agentResponseSchema = z.object({
         }),
       ),
       title_contains: z.string(),
+      task_id: z.string(),
+      task_title: z.string(),
+      task_basket: z.enum(["911", "operational", "deep_work", "random", "personal_brand", "other", ""]),
+      task_participant: z.enum(["vania", "nastia", "both", ""]),
+      target_task_basket: z.enum(["911", "operational", "deep_work", "random", "personal_brand", "other", ""]),
     }),
   ),
 });
@@ -204,6 +236,7 @@ class OpenAiAssistantAgentGateway implements AssistantAgentGateway {
             content: JSON.stringify({
               user_text: input.text,
               recent_activities: input.recentActivities.map(toRecentActivityContext),
+              open_tasks: input.openTasks.map(toOpenTaskContext),
             }),
           },
         ],
@@ -255,6 +288,12 @@ function buildAgentPrompt(timezone: string, now: string): string {
     "For list/delete date ranges: today is local 00:00 to tomorrow 00:00; this week is Monday 00:00 to next Monday 00:00.",
     "Prefer a concise Ukrainian or English reply matching the user's language.",
     "If you can resolve a follow-up from recent activities, use the exact recent activity id.",
+    "You also manage work task baskets. Baskets: 911, operational, deep_work, random, personal_brand, other.",
+    "For requests like add/закинь/додай task to 911/операційка/deep work, return task_create.",
+    "For requests like show/list/покажи 911/операційку/tasks, return task_list.",
+    "For requests like move/перенеси this task to deep work, return task_move_recent with the matching open task id and target basket.",
+    "For requests like close/done/закрий task, return task_close_recent with the matching open task id.",
+    "Use open_tasks to resolve task follow-ups like this task, last task, цю задачу, останню задачу, or title references.",
   ].join("\n");
 }
 
@@ -269,6 +308,18 @@ function toRecentActivityContext(activity: PlannedActivity): Record<string, stri
     ends_at: activity.endsAt,
     privacy: activity.privacy,
     sync_status: activity.syncStatus,
+  };
+}
+
+function toOpenTaskContext(task: WorkTask): Record<string, string> {
+  return {
+    id: task.id,
+    short_id: task.id.slice(0, 8),
+    title: task.title,
+    basket: task.basket,
+    participant: task.participant ?? "",
+    status: task.status,
+    created_at: task.createdAt,
   };
 }
 
@@ -375,6 +426,60 @@ function toAgentAction(action: z.infer<typeof agentResponseSchema>["actions"][nu
     };
   }
 
+  if (action.type === "task_create") {
+    if (!action.task_title && !action.title) {
+      return {
+        type: "ask_clarification",
+        message: action.message || "Яку задачу додати?",
+      };
+    }
+
+    if (!action.task_basket) {
+      return {
+        type: "ask_clarification",
+        message: action.message || "У який кошик додати задачу?",
+      };
+    }
+
+    return {
+      type: "task_create",
+      title: action.task_title || action.title,
+      basket: action.task_basket as TaskBasket,
+      participant: emptyToUndefined(action.task_participant) as AgentParticipant | undefined,
+    };
+  }
+
+  if (action.type === "task_list") {
+    return {
+      type: "task_list",
+      basket: emptyToUndefined(action.task_basket) as TaskBasket | undefined,
+    };
+  }
+
+  if (action.type === "task_move_recent") {
+    if (!action.target_task_basket) {
+      return {
+        type: "ask_clarification",
+        message: action.message || "У який кошик перенести задачу?",
+      };
+    }
+
+    return {
+      type: "task_move_recent",
+      taskId: emptyToUndefined(action.task_id),
+      titleContains: emptyToUndefined(action.title_contains || action.task_title),
+      basket: action.target_task_basket as TaskBasket,
+    };
+  }
+
+  if (action.type === "task_close_recent") {
+    return {
+      type: "task_close_recent",
+      taskId: emptyToUndefined(action.task_id),
+      titleContains: emptyToUndefined(action.title_contains || action.task_title),
+    };
+  }
+
   return undefined;
 }
 
@@ -424,6 +529,11 @@ const agentPlanSchema = {
           "scope_title_contains",
           "keep_rules",
           "title_contains",
+          "task_id",
+          "task_title",
+          "task_basket",
+          "task_participant",
+          "target_task_basket",
         ],
         properties: {
           type: {
@@ -436,6 +546,10 @@ const agentPlanSchema = {
               "draft_delete_recent",
               "draft_update_recent",
               "ask_clarification",
+              "task_create",
+              "task_list",
+              "task_move_recent",
+              "task_close_recent",
             ],
           },
           message: { type: "string" },
@@ -476,6 +590,17 @@ const agentPlanSchema = {
             },
           },
           title_contains: { type: "string" },
+          task_id: { type: "string" },
+          task_title: { type: "string" },
+          task_basket: {
+            type: "string",
+            enum: ["911", "operational", "deep_work", "random", "personal_brand", "other", ""],
+          },
+          task_participant: { type: "string", enum: ["vania", "nastia", "both", ""] },
+          target_task_basket: {
+            type: "string",
+            enum: ["911", "operational", "deep_work", "random", "personal_brand", "other", ""],
+          },
         },
       },
     },

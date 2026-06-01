@@ -34,6 +34,7 @@ export function createApp(config: AppConfig): App {
     plannedActivities,
     planningTextParser,
     voiceTranscription,
+    workTasks,
   });
   createTaskCommands({
     bot,
