@@ -1,6 +1,7 @@
 import { Bot } from "grammy";
 
 import type { AppConfig } from "../config/config.js";
+import { createAnalyticsInsightsGateway } from "../integrations/ai/openai-analytics-insights-gateway.js";
 import { createAssistantAgentGateway } from "../integrations/ai/openai-assistant-agent-gateway.js";
 import { createPlanningTextParserGateway } from "../integrations/ai/openai-planning-parser-gateway.js";
 import { createCalendarGateway } from "../integrations/calendar/google-calendar-gateway.js";
@@ -26,6 +27,7 @@ export function createApp(config: AppConfig): App {
   const timeEntries = new FileTimeEntryRepository(config.dataDir);
   const calendar = createCalendarGateway(config);
   const voiceTranscription = createVoiceTranscriptionGateway(config);
+  const analyticsInsights = createAnalyticsInsightsGateway(config);
   const assistantAgent = createAssistantAgentGateway(config);
   const planningTextParser = createPlanningTextParserGateway(config);
 
@@ -54,6 +56,7 @@ export function createApp(config: AppConfig): App {
   createAnalyticsCommands({
     bot,
     config,
+    analyticsInsights,
     plannedActivities,
     timeEntries,
     workTasks,

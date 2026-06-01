@@ -140,6 +140,7 @@ The assistant agent can also control time tracking from natural text or voice:
 ## Analytics
 
 Analytics combines planned calendar activities, tracked work time, open task baskets, and active timers.
+When OpenAI is configured, analytics also includes a short AI insight with patterns and suggested next actions.
 
 Examples:
 

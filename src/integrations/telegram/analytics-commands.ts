@@ -7,10 +7,12 @@ import { parseParticipant } from "../../domain/task-command-parser.js";
 import type { Participant, PlannedActivityRepository } from "../../domain/planned-activity.js";
 import type { TimeEntryRepository } from "../../domain/time-entry.js";
 import type { WorkTaskRepository } from "../../domain/task.js";
+import type { AnalyticsInsightsGateway } from "../ai/openai-analytics-insights-gateway.js";
 
 type AnalyticsCommandDeps = {
   bot: Bot;
   config: AppConfig;
+  analyticsInsights: AnalyticsInsightsGateway;
   plannedActivities: PlannedActivityRepository;
   timeEntries: TimeEntryRepository;
   workTasks: WorkTaskRepository;
@@ -57,15 +59,31 @@ export function createAnalyticsCommands(deps: AnalyticsCommandDeps): void {
     const active = await dependencies.timeEntries.getActive({ participant });
     const openTasks = await dependencies.workTasks.list({ status: "open" });
 
-    await ctx.reply(
-      formatAnalyticsSummary({
-        title,
-        plannedActivities: planned,
-        timeEntries: tracked,
-        openTasks,
-        activeTimeEntry: active,
-      }),
-    );
+    const report = formatAnalyticsSummary({
+      title,
+      plannedActivities: planned,
+      timeEntries: tracked,
+      openTasks,
+      activeTimeEntry: active,
+    });
+    const insight = await generateInsightSafely(dependencies.analyticsInsights, report);
+
+    await ctx.reply(insight ? [report, "", "AI insight:", insight].join("\n") : report);
+  }
+}
+
+async function generateInsightSafely(
+  analyticsInsights: AnalyticsInsightsGateway,
+  report: string,
+): Promise<string | undefined> {
+  if (!analyticsInsights.isEnabled()) {
+    return undefined;
+  }
+
+  try {
+    return await analyticsInsights.generate({ report, languageHint: "uk" });
+  } catch {
+    return undefined;
   }
 }
 
