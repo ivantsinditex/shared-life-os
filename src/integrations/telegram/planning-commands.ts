@@ -10,11 +10,12 @@ import {
   formatActivitySaved,
   formatActivityUpdated,
   formatCategory,
+  formatRange,
   formatConflictWarning,
   formatParticipant,
   formatSyncStatus,
 } from "../../domain/planned-activity-formatting.js";
-import { findConflicts } from "../../domain/conflict-detection.js";
+import { activitiesConflict, findConflicts } from "../../domain/conflict-detection.js";
 import {
   parsePlanCommand,
   parseUpdateCommand,
@@ -93,6 +94,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     workTasks,
   } = deps;
   const pendingPlans = new Map<string, NewPlannedActivity>();
+  const pendingPlanBatches = new Map<string, NewPlannedActivity[]>();
   const pendingUpdates = new Map<string, PendingUpdate>();
   const pendingDeletes = new Map<string, PlannedActivity>();
   const pendingBulkDeletes = new Map<string, PendingBulkDelete>();
@@ -383,7 +385,19 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
       return Boolean(result.reply);
     }
 
-    for (const action of actionableActions.length > 0 ? actionableActions : result.actions) {
+    const actionsToHandle = actionableActions.length > 0 ? actionableActions : result.actions;
+    const createActions = actionsToHandle.filter(
+      (action): action is Extract<AssistantAgentAction, { type: "draft_create" }> => action.type === "draft_create",
+    );
+    const nonCreateActions = actionsToHandle.filter((action) => action.type !== "draft_create");
+
+    if (createActions.length > 1) {
+      await previewPlanBatch(ctx, createActions);
+    } else if (createActions.length === 1) {
+      await handleAgentAction(ctx, createActions[0]);
+    }
+
+    for (const action of nonCreateActions) {
       await handleAgentAction(ctx, action);
     }
 
@@ -596,6 +610,78 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     ].join(" | ");
   }
 
+  async function createAndSyncActivity(activity: NewPlannedActivity): Promise<PlannedActivity> {
+    const saved = await plannedActivities.create(activity);
+
+    return syncActivityToCalendar({
+      activity: saved,
+      calendar,
+      logger,
+      plannedActivities,
+    });
+  }
+
+  async function previewPlanBatch(
+    ctx: Context,
+    actions: Array<Extract<AssistantAgentAction, { type: "draft_create" }>>,
+  ): Promise<void> {
+    const parsedActivities = actions.map((action) => ({
+      action,
+      parsed: parsePlanCommand(formatAgentCreateAction(action), config.timezone),
+    }));
+    const failed = parsedActivities.find((item) => !item.parsed.ok);
+
+    if (failed && !failed.parsed.ok) {
+      await ctx.reply(failed.parsed.error);
+      return;
+    }
+
+    const activities = parsedActivities
+      .map((item) => (item.parsed.ok ? item.parsed.activity : undefined))
+      .filter((activity): activity is NewPlannedActivity => Boolean(activity));
+    const conflictMessages: string[] = [];
+
+    for (const [index, activity] of activities.entries()) {
+      const conflictCheck = await checkPlanConflicts(plannedActivities, calendar, activity);
+      const batchConflicts = activities
+        .slice(0, index)
+        .filter((candidate) =>
+          activitiesConflict(activity, {
+            ...candidate,
+            syncStatus: "pending",
+          }),
+        );
+
+      if (conflictCheck.conflicts.length > 0 || batchConflicts.length > 0) {
+        conflictMessages.push(
+          `${index + 1}. ${activity.title} (${formatRange(activity.startsAt, activity.endsAt, activity.timezone)})`,
+        );
+      }
+    }
+
+    if (conflictMessages.length > 0) {
+      await ctx.reply(
+        [
+          "Не можу створити весь пакет одним натисканням, бо частина активностей конфліктує з календарем або між собою.",
+          "",
+          ...conflictMessages,
+          "",
+          "Можеш уточнити час для цих активностей або надіслати їх окремо.",
+        ].join("\n"),
+      );
+      return;
+    }
+
+    const token = randomUUID();
+    pendingPlanBatches.set(token, activities);
+
+    await ctx.reply(formatPlanBatchConfirmation(activities), {
+      reply_markup: new InlineKeyboard()
+        .text(`Створити всі ${activities.length}`, `plan:create-batch:${token}`)
+        .text("Скасувати", `plan:cancel-batch:${token}`),
+    });
+  }
+
   bot.callbackQuery(/^plan:create:(.+)$/, async (ctx) => {
     const token = ctx.match[1];
     const activity = pendingPlans.get(token);
@@ -616,22 +702,44 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     }
 
     pendingPlans.delete(token);
-    const saved = await plannedActivities.create(activity);
-    const synced = await syncActivityToCalendar({
-      activity: saved,
-      calendar,
-      logger,
-      plannedActivities,
-    });
+    const synced = await createAndSyncActivity(activity);
 
     rememberActivities(ctx, [synced]);
     await ctx.reply(formatActivitySyncResult(synced, formatActivitySaved(synced)));
+  });
+
+  bot.callbackQuery(/^plan:create-batch:(.+)$/, async (ctx) => {
+    const token = ctx.match[1];
+    const activities = pendingPlanBatches.get(token);
+
+    await ctx.answerCallbackQuery();
+
+    if (!activities) {
+      await ctx.reply("Підтвердження пакету застаріло. Надішли план ще раз.");
+      return;
+    }
+
+    pendingPlanBatches.delete(token);
+
+    const syncedActivities: PlannedActivity[] = [];
+    for (const activity of activities) {
+      syncedActivities.push(await createAndSyncActivity(activity));
+    }
+
+    rememberActivities(ctx, syncedActivities);
+    await ctx.reply(formatPlanBatchSaved(syncedActivities));
   });
 
   bot.callbackQuery(/^plan:cancel:(.+)$/, async (ctx) => {
     pendingPlans.delete(ctx.match[1]);
     await ctx.answerCallbackQuery();
     await ctx.reply("Планування скасовано. Нічого не збережено.");
+  });
+
+  bot.callbackQuery(/^plan:cancel-batch:(.+)$/, async (ctx) => {
+    pendingPlanBatches.delete(ctx.match[1]);
+    await ctx.answerCallbackQuery();
+    await ctx.reply("Пакетне планування скасовано. Нічого не збережено.");
   });
 
   bot.callbackQuery(/^plan:alternative:(.+):(\d+)$/, async (ctx) => {
@@ -1778,6 +1886,54 @@ function formatActivitySummary(
   });
 
   return [title, "", ...lines].join("\n");
+}
+
+function formatPlanBatchConfirmation(activities: NewPlannedActivity[]): string {
+  const lines = activities.map((activity, index) =>
+    [
+      `${index + 1}.`,
+      formatRange(activity.startsAt, activity.endsAt, activity.timezone),
+      "|",
+      formatParticipant(activity.participant),
+      "|",
+      formatCategory(activity.category),
+      "|",
+      renderCalendarTitle(activity),
+    ].join(" "),
+  );
+
+  return [
+    `Створити ${activities.length} запланованих активностей?`,
+    "",
+    ...lines,
+  ].join("\n");
+}
+
+function formatPlanBatchSaved(activities: PlannedActivity[]): string {
+  const syncedCount = activities.filter((activity) => activity.syncStatus === "synced").length;
+  const failedCount = activities.length - syncedCount;
+  const lines = activities.map((activity, index) =>
+    [
+      `${index + 1}.`,
+      formatRange(activity.startsAt, activity.endsAt, activity.timezone),
+      "|",
+      formatParticipant(activity.participant),
+      "|",
+      formatCategory(activity.category),
+      "|",
+      renderCalendarTitle(activity),
+      "|",
+      `синхронізація: ${formatSyncStatus(activity.syncStatus)}`,
+    ].join(" "),
+  );
+
+  return [
+    `Створено запланованих активностей: ${activities.length}.`,
+    `Синхронізовано: ${syncedCount}.`,
+    failedCount > 0 ? `Помилки синхронізації: ${failedCount}.` : "",
+    "",
+    ...lines,
+  ].filter(Boolean).join("\n");
 }
 
 async function syncActivityToCalendar(params: {
