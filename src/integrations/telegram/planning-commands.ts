@@ -292,7 +292,16 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
         return;
       }
 
-      await handleNaturalPlanningText(ctx, transcript);
+      try {
+        await handleNaturalPlanningText(ctx, transcript);
+      } catch (error) {
+        logger.warn("Voice transcript handling failed", {
+          error: error instanceof Error ? error.message : String(error),
+          telegramUserId: ctx.from?.id,
+        });
+
+        await ctx.reply("Голос розпізнав, але не зміг виконати команду. Спробуй надіслати цей самий текст повідомленням.");
+      }
     } catch (error) {
       logger.warn("Voice command failed", {
         error: error instanceof Error ? error.message : String(error),
@@ -702,7 +711,16 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
       endsAt: toIso(DateTime.fromMillis(endsAt).plus({ days: 1 })),
     };
     const localCandidates = await plannedActivities.listBetween(window);
-    const externalBusySlots = await calendar.listBusySlots(window);
+    let externalBusySlots: CalendarBusySlot[] = [];
+
+    try {
+      externalBusySlots = await calendar.listBusySlots(window);
+    } catch (error) {
+      logger.warn("Calendar busy lookup failed during batch conflict check", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
     const externalCandidates = externalBusySlots
       .filter((slot) => !localCandidates.some((candidate) => timeRangesOverlap(slot, candidate)))
       .map((slot) => toExternalBusyActivity(slot, config.timezone));
@@ -1587,7 +1605,7 @@ function looksLikeLargePlanningRequest(text: string): boolean {
   return text.length > 220 && (hasWeeklyOrRepeatedScope || hasFlexibleScheduling) && hasManyActivitySignals;
 }
 
-function buildDeterministicRepeatedPlan(
+export function buildDeterministicRepeatedPlan(
   text: string,
   options: {
     currentParticipant: Participant | undefined;
