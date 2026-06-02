@@ -309,6 +309,10 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
       return;
     }
 
+    if (await maybeHandleDeterministicBulkDelete(ctx, text)) {
+      return;
+    }
+
     if (await maybeHandleContextualDelete(ctx, text)) {
       return;
     }
@@ -1150,6 +1154,17 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     return true;
   }
 
+  async function maybeHandleDeterministicBulkDelete(ctx: Context, text: string): Promise<boolean> {
+    const scope = buildDeterministicBulkDeleteScope(text, config.timezone);
+
+    if (!scope) {
+      return false;
+    }
+
+    await previewBulkDelete(ctx, scope, []);
+    return true;
+  }
+
   async function previewBulkDelete(
     ctx: Context,
     scope: ParsedPlanningScope,
@@ -1332,6 +1347,90 @@ function looksLikeContextualReference(text: string): boolean {
     "его",
     "ее",
   ].some((token) => normalized.includes(token));
+}
+
+function buildDeterministicBulkDeleteScope(text: string, timezone: string): ParsedPlanningScope | undefined {
+  const normalized = normalizeText(text);
+
+  if (!looksLikeDeleteRequest(text) || !looksLikeAllEventsRequest(normalized)) {
+    return undefined;
+  }
+
+  const now = DateTime.now().setZone(timezone);
+  const weekRequested = [
+    "тиж",
+    "недел",
+    "week",
+  ].some((token) => normalized.includes(token));
+  const todayRequested = [
+    "сьогод",
+    "сегод",
+    "today",
+  ].some((token) => normalized.includes(token));
+
+  if (weekRequested) {
+    return {
+      startsAt: now.startOf("week").toFormat("yyyy-MM-dd HH:mm"),
+      endsAt: now.startOf("week").plus({ weeks: 1 }).toFormat("yyyy-MM-dd HH:mm"),
+      participant: resolveBulkDeleteParticipant(normalized),
+    };
+  }
+
+  if (todayRequested) {
+    return {
+      startsAt: now.startOf("day").toFormat("yyyy-MM-dd HH:mm"),
+      endsAt: now.startOf("day").plus({ days: 1 }).toFormat("yyyy-MM-dd HH:mm"),
+      participant: resolveBulkDeleteParticipant(normalized),
+    };
+  }
+
+  return undefined;
+}
+
+function looksLikeAllEventsRequest(normalizedText: string): boolean {
+  const hasAll = [
+    "вси",
+    "уси",
+    "усе",
+    "все",
+    "all",
+  ].some((token) => normalizedText.includes(token));
+  const hasEventNoun = [
+    "подии",
+    "падзеи",
+    "активност",
+    "events",
+    "activities",
+  ].some((token) => normalizedText.includes(token));
+
+  return hasAll && hasEventNoun;
+}
+
+function resolveBulkDeleteParticipant(normalizedText: string): Participant | undefined {
+  const allParticipants = [
+    "для всих",
+    "для усих",
+    "для всіх",
+    "для усіх",
+    "для мене и для насти",
+    "для меня и для насти",
+    "for everyone",
+    "for all",
+  ].some((token) => normalizedText.includes(normalizeText(token)));
+
+  if (allParticipants) {
+    return undefined;
+  }
+
+  if (normalizedText.includes("наст")) {
+    return "nastia";
+  }
+
+  if (normalizedText.includes("ван") || normalizedText.includes("иван") || normalizedText.includes("іван")) {
+    return "vania";
+  }
+
+  return undefined;
 }
 
 function selectContextualActivity(
