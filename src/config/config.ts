@@ -47,7 +47,7 @@ export function loadConfig(): AppConfig {
     dataDir: env.DATA_DIR,
     googleCalendarId: env.GOOGLE_CALENDAR_ID,
     googleClientEmail: env.GOOGLE_CLIENT_EMAIL,
-    googlePrivateKey: env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, "\n"),
+    googlePrivateKey: normalizeGooglePrivateKey(env.GOOGLE_PRIVATE_KEY),
     openAiApiKey: env.OPENAI_API_KEY,
     openAiTranscriptionModel: env.OPENAI_TRANSCRIPTION_MODEL,
     openAiPlanningModel: env.OPENAI_PLANNING_MODEL,
@@ -64,4 +64,20 @@ export function loadConfig(): AppConfig {
       },
     ],
   };
+}
+
+function normalizeGooglePrivateKey(value: string | undefined): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  const unquoted = (
+    (trimmed.startsWith("\"") && trimmed.endsWith("\"")) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  )
+    ? trimmed.slice(1, -1)
+    : trimmed;
+
+  return unquoted.replace(/\\n/g, "\n");
 }

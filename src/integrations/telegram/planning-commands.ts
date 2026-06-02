@@ -111,6 +111,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
         "/health - check bot status",
         "/plan - create a planned activity",
         "/update - update a planned activity",
+        "/calendar_status - check Google Calendar connection",
         "/sync_failed - show activities that need calendar retry",
         "/resync_calendar - refresh calendar titles and descriptions",
         "/whoami - show your Telegram identity mapping",
@@ -154,6 +155,51 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
         "Щоб підключити Настю, додай її Telegram ID у .env як NASTIA_TELEGRAM_USER_ID і перезапусти бота.",
       ].join("\n"),
     );
+  });
+
+  bot.command("calendar_status", async (ctx) => {
+    const missingConfig = [
+      config.googleCalendarId ? undefined : "GOOGLE_CALENDAR_ID",
+      config.googleClientEmail ? undefined : "GOOGLE_CLIENT_EMAIL",
+      config.googlePrivateKey ? undefined : "GOOGLE_PRIVATE_KEY",
+    ].filter((item): item is string => Boolean(item));
+
+    if (missingConfig.length > 0) {
+      await ctx.reply(
+        [
+          "Google Calendar не налаштовано повністю.",
+          `Не вистачає: ${missingConfig.join(", ")}.`,
+        ].join("\n"),
+      );
+      return;
+    }
+
+    const now = DateTime.now().setZone(config.timezone);
+
+    try {
+      await calendar.listBusySlots({
+        startsAt: toIso(now.startOf("day")),
+        endsAt: toIso(now.startOf("day").plus({ days: 1 })),
+      });
+
+      await ctx.reply(
+        [
+          "Google Calendar підключено.",
+          "Тестовий запит до календаря успішний.",
+          "",
+          "Якщо є локальні активності з помилкою синхронізації, запусти /resync_calendar.",
+        ].join("\n"),
+      );
+    } catch (error) {
+      await ctx.reply(
+        [
+          "Google Calendar env присутні, але тестовий запит не пройшов.",
+          `Причина: ${formatErrorForTelegram(error)}.`,
+          "",
+          "Перевір, що сервісний акаунт доданий у shared calendar з правом Make changes to events, а GOOGLE_PRIVATE_KEY вставлений без зайвих символів.",
+        ].join("\n"),
+      );
+    }
   });
 
   const handlePlanInput = async (ctx: Context, input: string): Promise<void> => {
@@ -2510,4 +2556,11 @@ function toIso(dateTime: DateTime): string {
   }
 
   return iso;
+}
+
+function formatErrorForTelegram(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const singleLine = message.replace(/\s+/g, " ").trim();
+
+  return singleLine.length > 400 ? `${singleLine.slice(0, 397)}...` : singleLine;
 }
