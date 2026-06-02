@@ -317,6 +317,10 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
       return;
     }
 
+    if (await maybeHandleDeterministicRepeatedPlan(ctx, text)) {
+      return;
+    }
+
     if (assistantAgent.isEnabled()) {
       let handledByAgent = false;
 
@@ -1171,6 +1175,42 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     return true;
   }
 
+  async function maybeHandleDeterministicRepeatedPlan(ctx: Context, text: string): Promise<boolean> {
+    const activities = buildDeterministicRepeatedPlan(text, {
+      currentParticipant: getCurrentParticipant(ctx, config),
+      timezone: config.timezone,
+    });
+
+    if (!activities) {
+      return false;
+    }
+
+    const conflictMessages = await findPlanBatchConflictMessages(activities);
+
+    if (conflictMessages.length > 0) {
+      await ctx.reply(
+        [
+          "Не можу створити повторюваний план одним натисканням, бо частина активностей конфліктує.",
+          "",
+          ...conflictMessages,
+          "",
+          "Можеш уточнити інший час або попросити асистента підібрати вільні слоти.",
+        ].join("\n"),
+      );
+      return true;
+    }
+
+    const token = randomUUID();
+    pendingPlanBatches.set(token, activities);
+
+    await ctx.reply(formatPlanBatchConfirmation(activities), {
+      reply_markup: new InlineKeyboard()
+        .text(`Створити всі ${activities.length}`, `plan:create-batch:${token}`)
+        .text("Скасувати", `plan:cancel-batch:${token}`),
+    });
+    return true;
+  }
+
   async function previewBulkDelete(
     ctx: Context,
     scope: ParsedPlanningScope,
@@ -1545,6 +1585,234 @@ function looksLikeLargePlanningRequest(text: string): boolean {
   ].filter((token) => normalized.includes(normalizeText(token))).length >= 3;
 
   return text.length > 220 && (hasWeeklyOrRepeatedScope || hasFlexibleScheduling) && hasManyActivitySignals;
+}
+
+function buildDeterministicRepeatedPlan(
+  text: string,
+  options: {
+    currentParticipant: Participant | undefined;
+    timezone: string;
+  },
+): NewPlannedActivity[] | undefined {
+  const normalized = normalizeText(text);
+  const asksForDailyRepeat = [
+    "кожен день",
+    "кожного дня",
+    "щодня",
+    "каждый день",
+    "every day",
+  ].some((token) => normalized.includes(normalizeText(token)));
+  const asksThroughThisWeek = [
+    "до кинця тижня",
+    "до кінця тижня",
+    "цього тижня",
+    "цей тиж",
+    "this week",
+  ].some((token) => normalized.includes(normalizeText(token)));
+
+  if (!asksForDailyRepeat || !asksThroughThisWeek) {
+    return undefined;
+  }
+
+  const activityTemplate = getRepeatedActivityTemplate(normalized);
+  const timeWindow = getRepeatedActivityTimeWindow(normalized);
+
+  if (!activityTemplate || !timeWindow) {
+    return undefined;
+  }
+
+  const participant = getRepeatedActivityParticipant(normalized, options.currentParticipant);
+  const now = DateTime.now().setZone(options.timezone);
+  const firstDay = now.startOf("day");
+  const lastDay = now.endOf("week").startOf("day");
+  const activities: NewPlannedActivity[] = [];
+
+  for (let day = firstDay; day <= lastDay; day = day.plus({ days: 1 })) {
+    const startsAt = day.set({
+      hour: timeWindow.startHour,
+      minute: timeWindow.startMinute,
+      second: 0,
+      millisecond: 0,
+    });
+    const endsAt = day.set({
+      hour: timeWindow.endHour,
+      minute: timeWindow.endMinute,
+      second: 0,
+      millisecond: 0,
+    });
+
+    if (endsAt <= startsAt) {
+      return undefined;
+    }
+
+    activities.push({
+      title: activityTemplate.title,
+      participant,
+      category: activityTemplate.category,
+      startsAt: toIso(startsAt),
+      endsAt: toIso(endsAt),
+      timezone: options.timezone,
+      privacy: "busy_only",
+      isSharedActivity: participant === "both",
+    });
+  }
+
+  return activities.length > 0 ? activities : undefined;
+}
+
+function getRepeatedActivityTemplate(normalizedText: string): Pick<NewPlannedActivity, "title" | "category"> | undefined {
+  if (normalizedText.includes("воркаут") || normalizedText.includes("workout")) {
+    return {
+      title: "Воркаут",
+      category: "sport",
+    };
+  }
+
+  if (normalizedText.includes("йог") || normalizedText.includes("yoga")) {
+    return {
+      title: "Тренування з йоги",
+      category: "sport",
+    };
+  }
+
+  if (normalizedText.includes("трен")) {
+    return {
+      title: "Тренування",
+      category: "sport",
+    };
+  }
+
+  return undefined;
+}
+
+function getRepeatedActivityParticipant(
+  normalizedText: string,
+  currentParticipant: Participant | undefined,
+): Participant {
+  if (normalizedText.includes("наст")) {
+    return "nastia";
+  }
+
+  if (
+    normalizedText.includes("разом") ||
+    normalizedText.includes("для нас") ||
+    normalizedText.includes("усім") ||
+    normalizedText.includes("всім")
+  ) {
+    return "both";
+  }
+
+  if (
+    normalizedText.includes("ван") ||
+    normalizedText.includes("иван") ||
+    normalizedText.includes("іван") ||
+    normalizedText.includes("для мене") ||
+    normalizedText.includes("мені")
+  ) {
+    return currentParticipant ?? "vania";
+  }
+
+  return currentParticipant ?? "vania";
+}
+
+function getRepeatedActivityTimeWindow(normalizedText: string):
+  | { startHour: number; startMinute: number; endHour: number; endMinute: number }
+  | undefined {
+  const numericRange = normalizedText.match(
+    /(?:з|від|с|from)?\s*(\d{1,2})(?::(\d{2}))?\s*(?:до|по|-|–|—|to)\s*(\d{1,2})(?::(\d{2}))?/,
+  );
+
+  if (numericRange) {
+    return {
+      startHour: normalizeLikelyAfternoonHour(Number(numericRange[1]), normalizedText),
+      startMinute: Number(numericRange[2] ?? 0),
+      endHour: normalizeLikelyAfternoonHour(Number(numericRange[3]), normalizedText),
+      endMinute: Number(numericRange[4] ?? 0),
+    };
+  }
+
+  const wordRange = normalizedText.match(
+    /(?:з|від|с)\s+([а-яіїєґ]+)\s+(?:до|по)\s+([а-яіїєґ]+)/,
+  );
+
+  if (!wordRange) {
+    return undefined;
+  }
+
+  const startHour = parseUkrainianHourWord(wordRange[1]);
+  const endHour = parseUkrainianHourWord(wordRange[2]);
+
+  if (startHour === undefined || endHour === undefined) {
+    return undefined;
+  }
+
+  return {
+    startHour: normalizeLikelyAfternoonHour(startHour, normalizedText),
+    startMinute: 0,
+    endHour: normalizeLikelyAfternoonHour(endHour, normalizedText),
+    endMinute: 0,
+  };
+}
+
+function normalizeLikelyAfternoonHour(hour: number, normalizedText: string): number {
+  if (hour >= 12) {
+    return hour;
+  }
+
+  const explicitlyMorning = [
+    "ранку",
+    "утра",
+    "morning",
+    "am",
+  ].some((token) => normalizedText.includes(normalizeText(token)));
+
+  if (explicitlyMorning) {
+    return hour;
+  }
+
+  const likelyDaytime = [
+    "дня",
+    "день",
+    "години",
+    "годину",
+    "пообид",
+    "після обіду",
+    "вечора",
+  ].some((token) => normalizedText.includes(normalizeText(token)));
+
+  return likelyDaytime && hour >= 1 && hour <= 8 ? hour + 12 : hour;
+}
+
+function parseUkrainianHourWord(value: string): number | undefined {
+  const normalized = normalizeText(value);
+  const hours: Record<string, number> = {
+    першои: 1,
+    першу: 1,
+    другои: 2,
+    другу: 2,
+    третю: 3,
+    третьои: 3,
+    четвертои: 4,
+    четверту: 4,
+    пятои: 5,
+    пяту: 5,
+    шостои: 6,
+    шосту: 6,
+    сьомои: 7,
+    сьому: 7,
+    восьмои: 8,
+    восьму: 8,
+    девятои: 9,
+    девяту: 9,
+    десятои: 10,
+    десяту: 10,
+    одинадцятои: 11,
+    одинадцяту: 11,
+    дванадцятои: 12,
+    дванадцяту: 12,
+  };
+
+  return hours[normalized];
 }
 
 function buildUpdatedActivityFromAgent(
