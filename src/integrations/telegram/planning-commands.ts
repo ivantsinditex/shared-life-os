@@ -321,6 +321,10 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
       let handledByAgent = false;
 
       try {
+        if (looksLikeLargePlanningRequest(text)) {
+          await ctx.reply("План великий, обробляю. Це може зайняти до 90 секунд.");
+        }
+
         handledByAgent = await handleAgentText(ctx, text);
       } catch (error) {
         logger.warn("Assistant agent failed", {
@@ -328,7 +332,9 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
           telegramUserId: ctx.from?.id,
         });
 
-        await ctx.reply("Асистент не встиг обробити запит. Спробуй коротше або розбий план на кілька повідомлень.");
+        await ctx.reply(
+          "Асистент не встиг обробити великий план. Спробуй розбити його на 2-3 повідомлення або додати більше конкретики.",
+        );
         return;
       }
 
@@ -1494,6 +1500,51 @@ function hoursSinceUpdate(activity: PlannedActivity): number {
 
 function normalizeText(value: string): string {
   return value.toLowerCase().replace(/ё/g, "е").replace(/і/g, "и").replace(/ї/g, "и");
+}
+
+function looksLikeLargePlanningRequest(text: string): boolean {
+  const normalized = normalizeText(text);
+  const hasWeeklyOrRepeatedScope = [
+    "цей тиж",
+    "цього тиж",
+    "на тиж",
+    "this week",
+    "кожен день",
+    "кожного дня",
+    "щодня",
+    "каждый день",
+    "every day",
+    "через день",
+    "every other day",
+  ].some((token) => normalized.includes(normalizeText(token)));
+  const hasFlexibleScheduling = [
+    "рандом",
+    "будь-як",
+    "будь як",
+    "сам розбер",
+    "сама розбер",
+    "сам вириш",
+    "сам виріш",
+    "random",
+    "whatever time",
+  ].some((token) => normalized.includes(normalizeText(token)));
+  const hasManyActivitySignals = [
+    "трен",
+    "воркаут",
+    "йог",
+    "робот",
+    "читан",
+    "навчан",
+    "прогулян",
+    "побачен",
+    "workout",
+    "yoga",
+    "work",
+    "reading",
+    "learning",
+  ].filter((token) => normalized.includes(normalizeText(token))).length >= 3;
+
+  return text.length > 220 && (hasWeeklyOrRepeatedScope || hasFlexibleScheduling) && hasManyActivitySignals;
 }
 
 function buildUpdatedActivityFromAgent(

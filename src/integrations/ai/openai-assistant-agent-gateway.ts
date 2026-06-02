@@ -245,7 +245,7 @@ class DisabledAssistantAgentGateway implements AssistantAgentGateway {
 }
 
 class OpenAiAssistantAgentGateway implements AssistantAgentGateway {
-  private readonly timeoutMs = 30_000;
+  private readonly timeoutMs = 90_000;
 
   constructor(private readonly config: { apiKey: string; model: string }) {}
 
@@ -318,6 +318,10 @@ function buildAgentPrompt(timezone: string, now: string, currentParticipant?: Ag
     "If the user asks to create several future activities in one message, return one draft_create action for every activity. Never turn one of the requested activities into a plain answer.",
     "For daily or weekly plan dictation, split the message into all concrete time blocks. A line like '05-08 біг' means a draft_create with start 05:00 and duration 180 minutes.",
     "For weekday labels in Ukrainian/Russian/English (ПН/понеділок/Monday, ВТ, СР, ЧТ, ПТ, СБ, НД), map them to the requested week. 'цей тиждень/на тиждень' means the current local week; 'наступний тиждень' means the next local week. If the week is truly ambiguous, ask a clarification.",
+    "For flexible scheduling phrases like random hours/рандомні години/сам розберись/будь-які години, choose reasonable non-overlapping local times yourself using recent_activities as constraints. Prefer daytime slots 09:00-20:00 unless the user gave a specific time window.",
+    "If the user requests daily work/reading/learning blocks without exact hours, create one draft_create per day and choose available-looking times. Do not ask for exact hours just because the user allowed random hours.",
+    "When the user says one activity should happen every day this week starting today, create it for every remaining day of the current local week including today. 'Через день' means every other day.",
+    "If the user gives a soft preferred hour like 'можна о четвертій', schedule that activity at 16:00 unless it conflicts with a supplied explicit block; otherwise choose a nearby reasonable time.",
     "When a work block contains a comma-separated task list, create the calendar work block and also create one task_create action per concrete task. Put operational/операційка tasks in the operational basket, urgent/911 tasks in 911, deep work tasks in deep_work, random/light work/зустрічі in random, personal brand/особистий бренд in personal_brand.",
     "Important: if several work tasks share one explicit time range, such as '11-16: task A, task B, task C', do not split the range into sequential calendar events. Return exactly one draft_create for the whole 11:00-16:00 work block, plus task_create actions for task A, task B, task C.",
     "If the user says tasks/таски/задачі for a time range, treat the listed items as task_create actions, not separate calendar activities, unless each item has its own explicit time.",
