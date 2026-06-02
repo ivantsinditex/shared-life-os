@@ -314,7 +314,19 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     }
 
     if (assistantAgent.isEnabled()) {
-      const handledByAgent = await handleAgentText(ctx, text);
+      let handledByAgent = false;
+
+      try {
+        handledByAgent = await handleAgentText(ctx, text);
+      } catch (error) {
+        logger.warn("Assistant agent failed", {
+          error: error instanceof Error ? error.message : String(error),
+          telegramUserId: ctx.from?.id,
+        });
+
+        await ctx.reply("Асистент не встиг обробити запит. Спробуй коротше або розбий план на кілька повідомлень.");
+        return;
+      }
 
       if (handledByAgent) {
         return;
@@ -639,25 +651,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     const activities = parsedActivities
       .map((item) => (item.parsed.ok ? item.parsed.activity : undefined))
       .filter((activity): activity is NewPlannedActivity => Boolean(activity));
-    const conflictMessages: string[] = [];
-
-    for (const [index, activity] of activities.entries()) {
-      const conflictCheck = await checkPlanConflicts(plannedActivities, calendar, activity);
-      const batchConflicts = activities
-        .slice(0, index)
-        .filter((candidate) =>
-          activitiesConflict(activity, {
-            ...candidate,
-            syncStatus: "pending",
-          }),
-        );
-
-      if (conflictCheck.conflicts.length > 0 || batchConflicts.length > 0) {
-        conflictMessages.push(
-          `${index + 1}. ${activity.title} (${formatRange(activity.startsAt, activity.endsAt, activity.timezone)})`,
-        );
-      }
-    }
+    const conflictMessages = await findPlanBatchConflictMessages(activities);
 
     if (conflictMessages.length > 0) {
       await ctx.reply(
@@ -680,6 +674,47 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
         .text(`Створити всі ${activities.length}`, `plan:create-batch:${token}`)
         .text("Скасувати", `plan:cancel-batch:${token}`),
     });
+  }
+
+  async function findPlanBatchConflictMessages(activities: NewPlannedActivity[]): Promise<string[]> {
+    const startsAt = activities
+      .map((activity) => Date.parse(activity.startsAt))
+      .reduce((left, right) => Math.min(left, right));
+    const endsAt = activities
+      .map((activity) => Date.parse(activity.endsAt))
+      .reduce((left, right) => Math.max(left, right));
+    const window = {
+      startsAt: toIso(DateTime.fromMillis(startsAt).minus({ days: 1 })),
+      endsAt: toIso(DateTime.fromMillis(endsAt).plus({ days: 1 })),
+    };
+    const localCandidates = await plannedActivities.listBetween(window);
+    const externalBusySlots = await calendar.listBusySlots(window);
+    const externalCandidates = externalBusySlots
+      .filter((slot) => !localCandidates.some((candidate) => timeRangesOverlap(slot, candidate)))
+      .map((slot) => toExternalBusyActivity(slot, config.timezone));
+    const existingCandidates = [...localCandidates, ...externalCandidates];
+    const conflictMessages: string[] = [];
+
+    for (const [index, activity] of activities.entries()) {
+      const previousBatchActivities = activities.slice(0, index).map((candidate) => ({
+        ...candidate,
+        id: `pending-batch-${index}`,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        syncStatus: "pending" as const,
+      }));
+      const hasConflict = [...existingCandidates, ...previousBatchActivities].some((candidate) =>
+        activitiesConflict(activity, candidate),
+      );
+
+      if (hasConflict) {
+        conflictMessages.push(
+          `${index + 1}. ${activity.title} (${formatRange(activity.startsAt, activity.endsAt, activity.timezone)})`,
+        );
+      }
+    }
+
+    return conflictMessages;
   }
 
   bot.callbackQuery(/^plan:create:(.+)$/, async (ctx) => {

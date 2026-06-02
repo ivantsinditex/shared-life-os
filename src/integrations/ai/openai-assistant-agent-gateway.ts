@@ -245,6 +245,8 @@ class DisabledAssistantAgentGateway implements AssistantAgentGateway {
 }
 
 class OpenAiAssistantAgentGateway implements AssistantAgentGateway {
+  private readonly timeoutMs = 30_000;
+
   constructor(private readonly config: { apiKey: string; model: string }) {}
 
   isEnabled(): boolean {
@@ -252,8 +254,12 @@ class OpenAiAssistantAgentGateway implements AssistantAgentGateway {
   }
 
   async respond(input: AssistantAgentInput): Promise<AssistantAgentResult> {
+    const abortController = new AbortController();
+    const timeout = setTimeout(() => abortController.abort(), this.timeoutMs);
+
     const response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
+      signal: abortController.signal,
       headers: {
         Authorization: `Bearer ${this.config.apiKey}`,
         "Content-Type": "application/json",
@@ -285,7 +291,7 @@ class OpenAiAssistantAgentGateway implements AssistantAgentGateway {
           },
         },
       }),
-    });
+    }).finally(() => clearTimeout(timeout));
 
     const payload = (await response.json()) as OpenAiResponsesPayload;
 
