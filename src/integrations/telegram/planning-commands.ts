@@ -1568,6 +1568,7 @@ function looksLikeLargePlanningRequest(text: string): boolean {
     "на тиж",
     "this week",
     "кожен день",
+    "кожний день",
     "кожного дня",
     "щодня",
     "каждый день",
@@ -1615,6 +1616,7 @@ export function buildDeterministicRepeatedPlan(
   const normalized = normalizeText(text);
   const asksForDailyRepeat = [
     "кожен день",
+    "кожний день",
     "кожного дня",
     "щодня",
     "каждый день",

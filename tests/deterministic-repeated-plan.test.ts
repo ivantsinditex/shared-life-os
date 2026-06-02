@@ -6,7 +6,7 @@ import { buildDeterministicRepeatedPlan } from "../src/integrations/telegram/pla
 describe("buildDeterministicRepeatedPlan", () => {
   it("expands daily workout requests through the end of the current week", () => {
     const activities = buildDeterministicRepeatedPlan(
-      "Додай, будь ласка, на кожен день до кінця тижня цього по одному тренуванню воркаут для мене з другої по третю годину.",
+      "Додай, будь ласка, до кінця тижня на кожний день одне тренування воркаут з другої по третю дня.",
       {
         currentParticipant: "vania",
         timezone: "Europe/Kiev",
