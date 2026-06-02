@@ -16,6 +16,26 @@ export function toGoogleVisibility(privacy: PrivacyLevel): "default" | "private"
   return privacy === "private" ? "private" : "default";
 }
 
+export function renderCalendarColorId(activity: Pick<PlannedActivity, "category" | "privacy">): string {
+  if (activity.privacy === "private") {
+    return "8";
+  }
+
+  const colorIds: Record<PlannedActivity["category"], string> = {
+    sport: "10",
+    work: "9",
+    learning: "5",
+    reading: "7",
+    dogs: "2",
+    horse: "6",
+    care: "3",
+    together: "4",
+    other: "1",
+  };
+
+  return colorIds[activity.category];
+}
+
 export function renderCalendarDescription(activity: PlannedActivity): string {
   if (activity.privacy === "private") {
     return [

@@ -22,6 +22,7 @@ import {
   getUpdateCommandUsage,
 } from "../../domain/plan-command-parser.js";
 import {
+  renderCalendarColorId,
   renderCalendarDescription,
   renderCalendarTitle,
   toGoogleVisibility,
@@ -1794,6 +1795,7 @@ async function syncActivityToCalendar(params: {
       visibility: toGoogleVisibility(params.activity.privacy),
       transparency: "opaque" as const,
       description: renderCalendarDescription(params.activity),
+      colorId: renderCalendarColorId(params.activity),
     };
     const event = params.activity.googleCalendarEventId
       ? await params.calendar.updateEvent(params.activity.googleCalendarEventId, draft)

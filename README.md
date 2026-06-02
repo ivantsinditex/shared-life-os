@@ -166,10 +166,13 @@ Core fields:
 - privacy: private, busy-only, or shared details;
 - sync status and Google Calendar event id.
 
+Google Calendar events are colored automatically by category. Private activities use a neutral calendar color, while visible activities keep category colors such as sport, work, horse, together, care, and so on.
+
 ## Calendar Access
 
 The bot writes all planned activities to the shared calendar configured as `GOOGLE_CALENDAR_ID`.
 That calendar must be shared with the service account email using **Make changes to events**.
+Run `/resync_calendar` after changing calendar rendering rules, such as colors or translated event details, to update already synchronized activities.
 
 ## Voice Access
 

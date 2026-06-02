@@ -8,6 +8,7 @@ export type CalendarEventDraft = {
   endsAt: string;
   timezone: string;
   description?: string;
+  colorId?: string;
   visibility?: "default" | "public" | "private" | "confidential";
   transparency?: "opaque" | "transparent";
 };
@@ -159,5 +160,6 @@ function toGoogleEvent(draft: CalendarEventDraft) {
     },
     visibility: draft.visibility ?? "default",
     transparency: draft.transparency ?? "opaque",
+    colorId: draft.colorId,
   };
 }

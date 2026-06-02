@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  renderCalendarColorId,
   renderCalendarDescription,
   renderCalendarTitle,
   toGoogleVisibility,
@@ -78,6 +79,17 @@ describe("privacy rendering", () => {
 
     expect(description).toContain("Together dinner");
     expect(description).toContain("Категорія: робота");
+  });
+
+  it("maps visible categories to distinct Google Calendar colors", () => {
+    expect(renderCalendarColorId(makeActivity({ category: "sport" }))).toBe("10");
+    expect(renderCalendarColorId(makeActivity({ category: "work" }))).toBe("9");
+    expect(renderCalendarColorId(makeActivity({ category: "horse" }))).toBe("6");
+    expect(renderCalendarColorId(makeActivity({ category: "together" }))).toBe("4");
+  });
+
+  it("uses a neutral color for private events", () => {
+    expect(renderCalendarColorId(makeActivity({ category: "sport", privacy: "private" }))).toBe("8");
   });
 });
 
