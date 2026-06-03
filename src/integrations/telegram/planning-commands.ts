@@ -471,9 +471,15 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     );
     const nonCreateActions = actionsToHandle.filter((action) => action.type !== "draft_create");
 
+    const allowFlexibleReschedule = looksLikeFlexibleSchedulingRequest(text);
+
     if (createActions.length > 1) {
       await previewPlanBatch(ctx, createActions, {
-        allowFlexibleReschedule: looksLikeFlexibleSchedulingRequest(text),
+        allowFlexibleReschedule,
+      });
+    } else if (createActions.length === 1 && allowFlexibleReschedule) {
+      await previewPlanBatch(ctx, createActions, {
+        allowFlexibleReschedule: true,
       });
     } else if (createActions.length === 1) {
       await handleAgentAction(ctx, createActions[0]);
@@ -692,6 +698,21 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     ].join(" | ");
   }
 
+  function toDraftCreateAction(activity: NewPlannedActivity): Extract<AssistantAgentAction, { type: "draft_create" }> {
+    const startsAt = DateTime.fromISO(activity.startsAt).setZone(activity.timezone);
+    const endsAt = DateTime.fromISO(activity.endsAt).setZone(activity.timezone);
+
+    return {
+      type: "draft_create",
+      title: activity.title,
+      participant: activity.participant,
+      category: activity.category,
+      start: startsAt.toFormat("yyyy-MM-dd HH:mm"),
+      durationMinutes: Math.round(endsAt.diff(startsAt, "minutes").minutes),
+      privacy: activity.privacy,
+    };
+  }
+
   async function createAndSyncActivity(activity: NewPlannedActivity): Promise<PlannedActivity> {
     const saved = await plannedActivities.create(activity);
 
@@ -724,9 +745,12 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
       .map((item) => (item.parsed.ok ? item.parsed.activity : undefined))
       .filter((activity): activity is NewPlannedActivity => Boolean(activity));
 
+    const originalActivities = activities;
+
     if (options.allowFlexibleReschedule) {
       activities = await rescheduleConflictingBatchActivities(activities);
     }
+    const rescheduled = options.allowFlexibleReschedule && hasRescheduledActivities(originalActivities, activities);
 
     const conflictMessages = await findPlanBatchConflictMessages(activities);
 
@@ -738,7 +762,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     const token = randomUUID();
     pendingPlanBatches.set(token, activities);
 
-    await ctx.reply(formatPlanBatchConfirmation(activities), {
+    await ctx.reply(formatPlanBatchConfirmation(activities, { rescheduled }), {
       reply_markup: new InlineKeyboard()
         .text(`Створити всі ${activities.length}`, `plan:create-batch:${token}`)
         .text("Скасувати", `plan:cancel-batch:${token}`),
@@ -816,6 +840,13 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     }
 
     return rescheduled;
+  }
+
+  function hasRescheduledActivities(original: NewPlannedActivity[], updated: NewPlannedActivity[]): boolean {
+    return original.some((activity, index) => (
+      activity.startsAt !== updated[index]?.startsAt ||
+      activity.endsAt !== updated[index]?.endsAt
+    ));
   }
 
   function findAvailableSlotForActivity(
@@ -1316,20 +1347,8 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
       return false;
     }
 
-    const conflictMessages = await findPlanBatchConflictMessages(activities);
-
-    if (conflictMessages.length > 0) {
-      await ctx.reply(formatRepeatedPlanConflictHelp(conflictMessages));
-      return true;
-    }
-
-    const token = randomUUID();
-    pendingPlanBatches.set(token, activities);
-
-    await ctx.reply(formatPlanBatchConfirmation(activities), {
-      reply_markup: new InlineKeyboard()
-        .text(`Створити всі ${activities.length}`, `plan:create-batch:${token}`)
-        .text("Скасувати", `plan:cancel-batch:${token}`),
+    await previewPlanBatch(ctx, activities.map(toDraftCreateAction), {
+      allowFlexibleReschedule: looksLikeFlexibleSchedulingRequest(text),
     });
     return true;
   }
@@ -1763,10 +1782,12 @@ export function buildDeterministicRepeatedPlan(
     return undefined;
   }
 
-  const activityTemplate = getRepeatedActivityTemplate(normalized);
+  const activityTemplates = getRepeatedActivityTemplates(normalized);
   const timeWindow = getRepeatedActivityTimeWindow(normalized);
+  const durationMinutes = getRepeatedActivityDurationMinutes(normalized);
+  const canUseFlexibleTime = looksLikeFlexibleSchedulingRequest(text) && durationMinutes !== undefined;
 
-  if (!activityTemplate || !timeWindow) {
+  if (activityTemplates.length === 0 || (!timeWindow && !canUseFlexibleTime)) {
     return undefined;
   }
 
@@ -1777,58 +1798,126 @@ export function buildDeterministicRepeatedPlan(
   const activities: NewPlannedActivity[] = [];
 
   for (let day = firstDay; day <= lastDay; day = day.plus({ days: 1 })) {
-    const startsAt = day.set({
-      hour: timeWindow.startHour,
-      minute: timeWindow.startMinute,
-      second: 0,
-      millisecond: 0,
-    });
-    const endsAt = day.set({
-      hour: timeWindow.endHour,
-      minute: timeWindow.endMinute,
-      second: 0,
-      millisecond: 0,
-    });
+    for (const [index, activityTemplate] of activityTemplates.entries()) {
+      const fallbackStart = day.set({
+        hour: 9 + index,
+        minute: 0,
+        second: 0,
+        millisecond: 0,
+      });
+      const startsAt = timeWindow
+        ? day.set({
+            hour: timeWindow.startHour,
+            minute: timeWindow.startMinute,
+            second: 0,
+            millisecond: 0,
+          })
+        : fallbackStart;
+      const endsAt = timeWindow
+        ? day.set({
+            hour: timeWindow.endHour,
+            minute: timeWindow.endMinute,
+            second: 0,
+            millisecond: 0,
+          })
+        : startsAt.plus({ minutes: durationMinutes ?? 60 });
 
-    if (endsAt <= startsAt) {
-      return undefined;
+      if (endsAt <= startsAt) {
+        return undefined;
+      }
+
+      activities.push({
+        title: activityTemplate.title,
+        participant,
+        category: activityTemplate.category,
+        startsAt: toIso(startsAt),
+        endsAt: toIso(endsAt),
+        timezone: options.timezone,
+        privacy: "busy_only",
+        isSharedActivity: participant === "both",
+      });
     }
-
-    activities.push({
-      title: activityTemplate.title,
-      participant,
-      category: activityTemplate.category,
-      startsAt: toIso(startsAt),
-      endsAt: toIso(endsAt),
-      timezone: options.timezone,
-      privacy: "busy_only",
-      isSharedActivity: participant === "both",
-    });
   }
 
   return activities.length > 0 ? activities : undefined;
 }
 
-function getRepeatedActivityTemplate(normalizedText: string): Pick<NewPlannedActivity, "title" | "category"> | undefined {
+function getRepeatedActivityTemplates(normalizedText: string): Array<Pick<NewPlannedActivity, "title" | "category">> {
+  const templates: Array<Pick<NewPlannedActivity, "title" | "category">> = [];
+
   if (normalizedText.includes("воркаут") || normalizedText.includes("workout")) {
-    return {
+    templates.push({
       title: "Воркаут",
       category: "sport",
-    };
+    });
   }
 
   if (normalizedText.includes("йог") || normalizedText.includes("yoga")) {
-    return {
+    templates.push({
       title: "Тренування з йоги",
       category: "sport",
-    };
+    });
   }
 
-  if (normalizedText.includes("трен")) {
-    return {
+  if (normalizedText.includes("читан") || normalizedText.includes("reading")) {
+    templates.push({
+      title: "Читання",
+      category: "reading",
+    });
+  }
+
+  if (normalizedText.includes("навчан") || normalizedText.includes("learning") || normalizedText.includes("study")) {
+    templates.push({
+      title: "Навчання",
+      category: "learning",
+    });
+  }
+
+  if (templates.length === 0 && normalizedText.includes("трен")) {
+    templates.push({
       title: "Тренування",
       category: "sport",
-    };
+    });
+  }
+
+  return templates;
+}
+
+function getRepeatedActivityDurationMinutes(normalizedText: string): number | undefined {
+  const numericHours = normalizedText.match(/(?:по\s*)?(\d+(?:[.,]\d+)?)\s*(?:годин|години|годину|г|hours?|h)/);
+
+  if (numericHours) {
+    return Math.round(Number(numericHours[1].replace(",", ".")) * 60);
+  }
+
+  const numericMinutes = normalizedText.match(/(?:по\s*)?(\d+)\s*(?:хвилин|хв|minutes?|min)/);
+
+  if (numericMinutes) {
+    return Number(numericMinutes[1]);
+  }
+
+  const wordHours: Record<string, number> = {
+    одну: 1,
+    одна: 1,
+    одній: 1,
+    дві: 2,
+    дви: 2,
+    две: 2,
+    двох: 2,
+    три: 3,
+    чотири: 4,
+    пять: 5,
+    "п'ять": 5,
+    пʼять: 5,
+    пята: 5,
+  };
+  const wordHourPattern = new RegExp(
+    `(?:по\\s*)?(${Object.keys(wordHours).join("|")})\\s*(?:годин|години|годину)`,
+  );
+  const wordMatch = normalizedText.match(wordHourPattern);
+
+  if (wordMatch) {
+    return wordHours[wordMatch[1]] * 60;
   }
 
   return undefined;
@@ -2490,7 +2579,10 @@ function formatActivitySummary(
   return [title, "", ...lines].join("\n");
 }
 
-function formatPlanBatchConfirmation(activities: NewPlannedActivity[]): string {
+function formatPlanBatchConfirmation(
+  activities: NewPlannedActivity[],
+  options: { rescheduled?: boolean } = {},
+): string {
   const lines = activities.map((activity, index) =>
     [
       `${index + 1}.`,
@@ -2506,9 +2598,10 @@ function formatPlanBatchConfirmation(activities: NewPlannedActivity[]): string {
 
   return [
     `Створити ${activities.length} запланованих активностей?`,
+    options.rescheduled ? "Я підібрав вільні слоти там, де початковий час був зайнятий." : "",
     "",
     ...lines,
-  ].join("\n");
+  ].filter(Boolean).join("\n");
 }
 
 function formatPlanBatchSaved(activities: PlannedActivity[]): string {
@@ -2754,17 +2847,6 @@ function formatBatchConflictHelp(conflictMessages: string[]): string {
     "- попроси: “знайди вільні слоти, заброньовані не використовуй”;",
     "- або задай точні інші години для цих пунктів;",
     "- або надішли конфліктні активності окремо.",
-  ].join("\n");
-}
-
-function formatRepeatedPlanConflictHelp(conflictMessages: string[]): string {
-  return [
-    "Повторюваний план має конфлікти.",
-    "",
-    ...conflictMessages,
-    "",
-    "Можеш сказати так:",
-    "Додай це до кінця тижня, але вибери сам вільні години і не використовуй заброньовані слоти.",
   ].join("\n");
 }
 
