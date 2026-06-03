@@ -45,6 +45,8 @@ export function createApp(config: AppConfig): App {
   });
   createTaskCommands({
     bot,
+    config,
+    timeEntries,
     workTasks,
   });
   createTimeCommands({

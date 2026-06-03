@@ -67,6 +67,7 @@ import {
 } from "../../domain/time-entry-formatting.js";
 import type { TimeEntryRepository } from "../../domain/time-entry.js";
 import type { Logger } from "../../utils/logger.js";
+import { buildTaskListKeyboard } from "./task-keyboard.js";
 
 type PlanningCommandDeps = {
   bot: Bot;
@@ -582,9 +583,13 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
 
     if (action.type === "task_list") {
       const tasks = await workTasks.list({ basket: action.basket, status: "open" });
+      const keyboard = buildTaskListKeyboard(tasks);
 
       rememberTasks(ctx, tasks);
-      await ctx.reply(formatTaskList(action.basket ? `Відкриті задачі: ${formatBasketLabel(action.basket)}` : "Відкриті задачі", tasks));
+      await ctx.reply(
+        formatTaskList(action.basket ? `Відкриті задачі: ${formatBasketLabel(action.basket)}` : "Відкриті задачі", tasks),
+        keyboard ? { reply_markup: keyboard } : undefined,
+      );
       return;
     }
 

@@ -14,15 +14,21 @@ import {
   formatTaskMoved,
   formatTaskSaved,
 } from "../../domain/task-formatting.js";
+import { formatActiveTimeEntry, formatTimeStarted } from "../../domain/time-entry-formatting.js";
 import type { WorkTaskRepository } from "../../domain/task.js";
+import type { AppConfig } from "../../config/config.js";
+import type { TimeEntryRepository } from "../../domain/time-entry.js";
+import { buildTaskListKeyboard } from "./task-keyboard.js";
 
 type TaskCommandDeps = {
   bot: Bot;
+  config: AppConfig;
+  timeEntries: TimeEntryRepository;
   workTasks: WorkTaskRepository;
 };
 
 export function createTaskCommands(deps: TaskCommandDeps): void {
-  const { bot, workTasks } = deps;
+  const { bot, config, timeEntries, workTasks } = deps;
 
   bot.command("task_add", async (ctx) => {
     const input = getCommandInput(ctx);
@@ -55,8 +61,9 @@ export function createTaskCommands(deps: TaskCommandDeps): void {
 
     const tasks = await workTasks.list({ basket, status: "open" });
     const title = basket ? `Відкриті задачі: ${formatBasketLabel(basket)}` : "Відкриті задачі";
+    const keyboard = buildTaskListKeyboard(tasks);
 
-    await ctx.reply(formatTaskList(title, tasks));
+    await ctx.reply(formatTaskList(title, tasks), keyboard ? { reply_markup: keyboard } : undefined);
   });
 
   bot.command("task_move", async (ctx) => {
@@ -111,6 +118,52 @@ export function createTaskCommands(deps: TaskCommandDeps): void {
       closedAt: now,
     });
 
+    await ctx.reply(formatTaskClosed(updated));
+  });
+
+  bot.callbackQuery(/^task:track:(.+)$/, async (ctx) => {
+    const task = await workTasks.getById(ctx.match[1]);
+
+    if (!task || task.status !== "open") {
+      await ctx.answerCallbackQuery("Задачу вже закрито або не знайдено.");
+      return;
+    }
+
+    const active = await timeEntries.getActive({ participant: task.participant });
+
+    if (active) {
+      await ctx.answerCallbackQuery("Уже є активний таймер.");
+      await ctx.reply(["Уже є активний таймер.", "", formatActiveTimeEntry(active, config.timezone)].join("\n"));
+      return;
+    }
+
+    const entry = await timeEntries.create({
+      basket: task.basket,
+      title: task.title,
+      participant: task.participant,
+      taskId: task.id,
+      startedAt: new Date().toISOString(),
+    });
+
+    await ctx.answerCallbackQuery("Таймер запущено.");
+    await ctx.reply(formatTimeStarted(entry, config.timezone));
+  });
+
+  bot.callbackQuery(/^task:close:(.+)$/, async (ctx) => {
+    const task = await workTasks.getById(ctx.match[1]);
+
+    if (!task || task.status !== "open") {
+      await ctx.answerCallbackQuery("Задачу вже закрито або не знайдено.");
+      return;
+    }
+
+    const updated = await workTasks.update({
+      ...task,
+      status: "closed",
+      closedAt: new Date().toISOString(),
+    });
+
+    await ctx.answerCallbackQuery("Задачу закрито.");
     await ctx.reply(formatTaskClosed(updated));
   });
 }
