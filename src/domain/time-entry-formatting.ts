@@ -6,7 +6,7 @@ import { formatBasketLabel } from "./task-formatting.js";
 
 export function formatTimeStarted(entry: TimeEntry, timezone: string): string {
   return [
-    "Timer started.",
+    "Таймер запущено.",
     "",
     formatTimeEntryLine(entry, timezone),
   ].join("\n");
@@ -14,29 +14,29 @@ export function formatTimeStarted(entry: TimeEntry, timezone: string): string {
 
 export function formatTimeStopped(entry: TimeEntry, timezone: string): string {
   return [
-    "Timer stopped.",
+    "Таймер зупинено.",
     "",
     formatTimeEntryLine(entry, timezone),
-    `Duration: ${formatDuration(getEntryDurationMinutes(entry))}`,
+    `Тривалість: ${formatDuration(getEntryDurationMinutes(entry))}`,
   ].join("\n");
 }
 
 export function formatActiveTimeEntry(entry: TimeEntry | undefined, timezone: string): string {
   if (!entry) {
-    return "No active timer.";
+    return "Активного таймера немає.";
   }
 
   return [
-    "Active timer:",
+    "Активний таймер:",
     "",
     formatTimeEntryLine(entry, timezone),
-    `Running: ${formatDuration(getEntryDurationMinutes(entry, new Date().toISOString()))}`,
+    `Триває: ${formatDuration(getEntryDurationMinutes(entry, new Date().toISOString()))}`,
   ].join("\n");
 }
 
 export function formatTimeSummary(title: string, entries: TimeEntry[], timezone: string): string {
   if (entries.length === 0) {
-    return `${title}\n\nNo tracked time.`;
+    return `${title}\n\nПоки немає затреканого часу.`;
   }
 
   const totals = new Map<TaskBasket, number>();
@@ -51,20 +51,20 @@ export function formatTimeSummary(title: string, entries: TimeEntry[], timezone:
   return [
     title,
     "",
-    `Total: ${formatDuration(totalMinutes)}`,
+    `Разом: ${formatDuration(totalMinutes)}`,
     "",
     ...Array.from(totals.entries()).map(
       ([basket, minutes]) => `${formatBasketLabel(basket)}: ${formatDuration(minutes)}`,
     ),
     "",
-    "Entries:",
+    "Записи:",
     ...entries.map((entry, index) => `${index + 1}. ${formatTimeEntryLine(entry, timezone)}`),
   ].join("\n");
 }
 
 function formatTimeEntryLine(entry: TimeEntry, timezone: string): string {
   const start = DateTime.fromISO(entry.startedAt).setZone(timezone).toFormat("ccc HH:mm");
-  const end = entry.endedAt ? DateTime.fromISO(entry.endedAt).setZone(timezone).toFormat("HH:mm") : "now";
+  const end = entry.endedAt ? DateTime.fromISO(entry.endedAt).setZone(timezone).toFormat("HH:mm") : "зараз";
   const participant = entry.participant ? ` | ${entry.participant}` : "";
 
   return `${start} - ${end} | ${formatBasketLabel(entry.basket)}${participant} | ${entry.title}`;
@@ -85,12 +85,12 @@ function formatDuration(minutes: number): string {
   const remainder = minutes % 60;
 
   if (hours === 0) {
-    return `${remainder} min`;
+    return `${remainder} хв`;
   }
 
   if (remainder === 0) {
-    return `${hours}h`;
+    return `${hours} год`;
   }
 
-  return `${hours}h ${remainder}m`;
+  return `${hours} год ${remainder} хв`;
 }

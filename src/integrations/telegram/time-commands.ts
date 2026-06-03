@@ -36,14 +36,14 @@ export function createTimeCommands(deps: TimeCommandDeps): void {
     const participant = parts[2] ? parseParticipant(parts[2]) : undefined;
 
     if (parts[2] && !participant) {
-      await ctx.reply(`Unknown participant: ${parts[2]}`);
+      await ctx.reply(`Не знаю такого учасника: ${parts[2]}`);
       return;
     }
 
     const active = await timeEntries.getActive({ participant });
 
     if (active) {
-      await ctx.reply(["You already have an active timer.", "", formatActiveTimeEntry(active, config.timezone)].join("\n"));
+      await ctx.reply(["Уже є активний таймер.", "", formatActiveTimeEntry(active, config.timezone)].join("\n"));
       return;
     }
 
@@ -51,7 +51,7 @@ export function createTimeCommands(deps: TimeCommandDeps): void {
     const basket = task ? task.basket : parseTaskBasket(target);
 
     if (!basket) {
-      await ctx.reply(`Unknown basket or task id: ${target}\n\n${getTimeStartUsage()}`);
+      await ctx.reply(`Не знаю такого кошика або id задачі: ${target}\n\n${getTimeStartUsage()}`);
       return;
     }
 
@@ -71,14 +71,14 @@ export function createTimeCommands(deps: TimeCommandDeps): void {
     const participant = input ? parseParticipant(input) : undefined;
 
     if (input && !participant) {
-      await ctx.reply(`Unknown participant: ${input}`);
+      await ctx.reply(`Не знаю такого учасника: ${input}`);
       return;
     }
 
     const active = await timeEntries.getActive({ participant });
 
     if (!active) {
-      await ctx.reply("No active timer.");
+      await ctx.reply("Активного таймера немає.");
       return;
     }
 
@@ -95,7 +95,7 @@ export function createTimeCommands(deps: TimeCommandDeps): void {
     const participant = input ? parseParticipant(input) : undefined;
 
     if (input && !participant) {
-      await ctx.reply(`Unknown participant: ${input}`);
+      await ctx.reply(`Не знаю такого учасника: ${input}`);
       return;
     }
 
@@ -109,7 +109,7 @@ export function createTimeCommands(deps: TimeCommandDeps): void {
     const participant = input ? parseParticipant(input) : undefined;
 
     if (input && !participant) {
-      await ctx.reply(`Unknown participant: ${input}`);
+      await ctx.reply(`Не знаю такого учасника: ${input}`);
       return;
     }
 
@@ -120,7 +120,7 @@ export function createTimeCommands(deps: TimeCommandDeps): void {
       participant,
     });
 
-    await ctx.reply(formatTimeSummary("Tracked time today", entries, config.timezone));
+    await ctx.reply(formatTimeSummary("Затреканий час сьогодні", entries, config.timezone));
   });
 
   bot.command("time_week", async (ctx) => {
@@ -128,7 +128,7 @@ export function createTimeCommands(deps: TimeCommandDeps): void {
     const participant = input ? parseParticipant(input) : undefined;
 
     if (input && !participant) {
-      await ctx.reply(`Unknown participant: ${input}`);
+      await ctx.reply(`Не знаю такого учасника: ${input}`);
       return;
     }
 
@@ -139,16 +139,16 @@ export function createTimeCommands(deps: TimeCommandDeps): void {
       participant,
     });
 
-    await ctx.reply(formatTimeSummary("Tracked time this week", entries, config.timezone));
+    await ctx.reply(formatTimeSummary("Затреканий час цього тижня", entries, config.timezone));
   });
 }
 
 function getTimeStartUsage(): string {
   return [
-    "Use:",
+    "Формат:",
     "/time_start basket_or_task_id | title | participant",
     "",
-    "Examples:",
+    "Приклади:",
     "/time_start deep_work | Architecture planning | vania",
     "/time_start ab12cd34",
   ].join("\n");

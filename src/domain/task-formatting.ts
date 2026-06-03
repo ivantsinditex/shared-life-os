@@ -2,7 +2,7 @@ import type { TaskBasket, WorkTask } from "./task.js";
 
 export function formatTaskSaved(task: WorkTask): string {
   return [
-    "Task saved.",
+    "Задачу збережено.",
     "",
     formatTaskLine(task),
   ].join("\n");
@@ -10,7 +10,7 @@ export function formatTaskSaved(task: WorkTask): string {
 
 export function formatTaskMoved(task: WorkTask): string {
   return [
-    "Task moved.",
+    "Задачу перенесено.",
     "",
     formatTaskLine(task),
   ].join("\n");
@@ -18,7 +18,7 @@ export function formatTaskMoved(task: WorkTask): string {
 
 export function formatTaskClosed(task: WorkTask): string {
   return [
-    "Task closed.",
+    "Задачу закрито.",
     "",
     formatTaskLine(task),
   ].join("\n");
@@ -26,7 +26,7 @@ export function formatTaskClosed(task: WorkTask): string {
 
 export function formatTaskList(title: string, tasks: WorkTask[]): string {
   if (tasks.length === 0) {
-    return `${title}\n\nNo open tasks.`;
+    return `${title}\n\nВідкритих задач немає.`;
   }
 
   return [
@@ -39,11 +39,11 @@ export function formatTaskList(title: string, tasks: WorkTask[]): string {
 export function formatBasketLabel(basket: TaskBasket): string {
   const labels: Record<TaskBasket, string> = {
     "911": "911",
-    operational: "operational",
+    operational: "операційка",
     deep_work: "deep work",
-    random: "random",
-    personal_brand: "personal brand",
-    other: "other",
+    random: "рандом",
+    personal_brand: "особистий бренд",
+    other: "інше",
   };
 
   return labels[basket];

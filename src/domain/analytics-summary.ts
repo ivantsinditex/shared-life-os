@@ -31,21 +31,21 @@ export function formatAnalyticsSummary(input: AnalyticsSummaryInput): string {
   return [
     input.title,
     "",
-    `Planned: ${formatDuration(plannedMinutes)}`,
-    `Tracked: ${formatDuration(trackedMinutes)}`,
-    `Delta: ${formatSignedDuration(deltaMinutes)}`,
-    input.activeTimeEntry ? `Active timer: ${formatBasketLabel(input.activeTimeEntry.basket)} | ${input.activeTimeEntry.title}` : "Active timer: none",
+    `Заплановано: ${formatDuration(plannedMinutes)}`,
+    `Затрекано: ${formatDuration(trackedMinutes)}`,
+    `Різниця: ${formatSignedDuration(deltaMinutes)}`,
+    input.activeTimeEntry ? `Активний таймер: ${formatBasketLabel(input.activeTimeEntry.basket)} | ${input.activeTimeEntry.title}` : "Активний таймер: немає",
     "",
-    "Trend:",
+    "Динаміка:",
     ...formatTrend(input.trendBuckets ?? [], input.plannedActivities, input.timeEntries, now),
     "",
-    "Tracked by basket:",
+    "Затрекано по кошиках:",
     ...formatBasketBreakdown(trackedByBasket),
     "",
-    "Planned by category:",
+    "Заплановано по категоріях:",
     ...formatCategoryBreakdown(plannedByCategory),
     "",
-    "Open tasks:",
+    "Відкриті задачі:",
     ...formatTaskBreakdown(openTasksByBasket),
   ].join("\n");
 }
@@ -57,7 +57,7 @@ function formatTrend(
   fallbackEnd: string,
 ): string[] {
   if (buckets.length === 0) {
-    return ["- none"];
+    return ["- немає"];
   }
 
   const rows = buckets.map((bucket) => {
@@ -145,7 +145,7 @@ function getTrackedMinutes(entry: TimeEntry, fallbackEnd: string): number {
 
 function formatBasketBreakdown(totals: Map<TaskBasket, number>): string[] {
   if (totals.size === 0) {
-    return ["- none"];
+    return ["- немає"];
   }
 
   return Array.from(totals.entries())
@@ -155,7 +155,7 @@ function formatBasketBreakdown(totals: Map<TaskBasket, number>): string[] {
 
 function formatCategoryBreakdown(totals: Map<ActivityCategory, number>): string[] {
   if (totals.size === 0) {
-    return ["- none"];
+    return ["- немає"];
   }
 
   return Array.from(totals.entries())
@@ -165,7 +165,7 @@ function formatCategoryBreakdown(totals: Map<ActivityCategory, number>): string[
 
 function formatTaskBreakdown(totals: Map<TaskBasket, number>): string[] {
   if (totals.size === 0) {
-    return ["- none"];
+    return ["- немає"];
   }
 
   return Array.from(totals.entries())
@@ -178,19 +178,19 @@ function formatDuration(minutes: number): string {
   const remainder = minutes % 60;
 
   if (hours === 0) {
-    return `${remainder} min`;
+    return `${remainder} хв`;
   }
 
   if (remainder === 0) {
-    return `${hours}h`;
+    return `${hours} год`;
   }
 
-  return `${hours}h ${remainder}m`;
+  return `${hours} год ${remainder} хв`;
 }
 
 function formatSignedDuration(minutes: number): string {
   if (minutes === 0) {
-    return "0 min";
+    return "0 хв";
   }
 
   const sign = minutes > 0 ? "+" : "-";

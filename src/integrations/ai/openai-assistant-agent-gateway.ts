@@ -358,11 +358,13 @@ function buildAgentPrompt(timezone: string, now: string, currentParticipant?: Ag
     "For requests like close/done/закрий task, return task_close_recent with the matching open task id.",
     "Use open_tasks to resolve task follow-ups like this task, last task, цю задачу, останню задачу, or title references.",
     "You also manage time tracking. For 'start/почав/почала трекати deep work/911/операційку', return time_start.",
+    "For casual phrases like 'почала операційку', 'почав deep work', 'стартани 911', return time_start for that basket and current participant.",
     "For 'start tracking this task/почав цю задачу', return time_start with matching open task id.",
     "For 'stop/закінчив/закінчила/стоп/зупини таймер', return time_stop.",
     "For 'what is active/що зараз трекається/status', return time_status.",
     "For 'how much today/скільки сьогодні/цього тижня було 911/deep work', return time_summary with local scope_start and scope_end.",
     "For time_summary date ranges: today is local 00:00 to tomorrow 00:00; this week is Monday 00:00 to next Monday 00:00.",
+    "For task/time replies, prefer Ukrainian wording and avoid explaining the internal action type.",
   ].join("\n");
 }
 

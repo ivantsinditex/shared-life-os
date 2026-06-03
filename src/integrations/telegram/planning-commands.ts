@@ -52,6 +52,7 @@ import {
 } from "../../domain/planned-activity.js";
 import type { PlannedActivityRepository } from "../../domain/planned-activity.js";
 import {
+  formatBasketLabel,
   formatTaskClosed,
   formatTaskList,
   formatTaskMoved,
@@ -583,7 +584,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
       const tasks = await workTasks.list({ basket: action.basket, status: "open" });
 
       rememberTasks(ctx, tasks);
-      await ctx.reply(formatTaskList(action.basket ? `Open tasks in ${action.basket}` : "Open tasks", tasks));
+      await ctx.reply(formatTaskList(action.basket ? `Відкриті задачі: ${formatBasketLabel(action.basket)}` : "Відкриті задачі", tasks));
       return;
     }
 
@@ -591,7 +592,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
       const task = findRecentTask(ctx, action.taskId, action.titleContains);
 
       if (!task) {
-        await ctx.reply("I could not find a matching open task to move.");
+        await ctx.reply("Не знайшов відкриту задачу, яку треба перенести. Спробуй вказати назву або покажи /tasks.");
         return;
       }
 
@@ -609,7 +610,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
       const task = findRecentTask(ctx, action.taskId, action.titleContains);
 
       if (!task) {
-        await ctx.reply("I could not find a matching open task to close.");
+        await ctx.reply("Не знайшов відкриту задачу, яку треба закрити. Спробуй вказати назву або покажи /tasks.");
         return;
       }
 
@@ -629,14 +630,14 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
       const basket = action.basket ?? task?.basket;
 
       if (!basket) {
-        await ctx.reply("Which basket or task should I start tracking?");
+        await ctx.reply("Що саме почати трекати: 911, операційку, deep work, рандом або конкретну задачу?");
         return;
       }
 
       const active = await timeEntries.getActive({ participant: action.participant });
 
       if (active) {
-        await ctx.reply(["You already have an active timer.", "", formatActiveTimeEntry(active, config.timezone)].join("\n"));
+        await ctx.reply(["Уже є активний таймер.", "", formatActiveTimeEntry(active, config.timezone)].join("\n"));
         return;
       }
 
@@ -656,7 +657,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
       const active = await timeEntries.getActive({ participant: action.participant });
 
       if (!active) {
-        await ctx.reply("No active timer.");
+        await ctx.reply("Активного таймера немає.");
         return;
       }
 
@@ -683,7 +684,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
         participant: action.participant,
       });
 
-      await ctx.reply(formatTimeSummary("Tracked time", entries, config.timezone));
+      await ctx.reply(formatTimeSummary("Затреканий час", entries, config.timezone));
     }
   }
 

@@ -18,26 +18,26 @@ export type ParsedTaskMove = {
 
 export function getTaskAddUsage(): string {
   return [
-    "Use:",
+    "Формат:",
     "/task_add Title | basket | participant",
     "",
-    "Example:",
+    "Приклад:",
     "/task_add Reply to urgent client | 911 | vania",
     "",
-    `baskets: ${taskBaskets.join(", ")}`,
-    `participants: ${participants.join(", ")} (optional)`,
+    `Кошики: ${taskBaskets.join(", ")}`,
+    `Учасники: ${participants.join(", ")} (необов'язково)`,
   ].join("\n");
 }
 
 export function getTaskMoveUsage(): string {
   return [
-    "Use:",
+    "Формат:",
     "/task_move short_id | basket",
     "",
-    "Example:",
+    "Приклад:",
     "/task_move ab12cd34 | deep_work",
     "",
-    `baskets: ${taskBaskets.join(", ")}`,
+    `Кошики: ${taskBaskets.join(", ")}`,
   ].join("\n");
 }
 
@@ -52,17 +52,17 @@ export function parseTaskAddCommand(input: string): ParseResult<ParsedTaskAdd> {
   const basket = parseTaskBasket(basketInput);
 
   if (!title) {
-    return { ok: false, error: "Task title is required." };
+    return { ok: false, error: "Потрібна назва задачі." };
   }
 
   if (!basket) {
-    return { ok: false, error: `Unknown basket: ${basketInput}\n\n${getTaskAddUsage()}` };
+    return { ok: false, error: `Не знаю такого кошика: ${basketInput}\n\n${getTaskAddUsage()}` };
   }
 
   const participant = participantInput ? parseParticipant(participantInput) : undefined;
 
   if (participantInput && !participant) {
-    return { ok: false, error: `Unknown participant: ${participantInput}` };
+    return { ok: false, error: `Не знаю такого учасника: ${participantInput}` };
   }
 
   return {
@@ -86,11 +86,11 @@ export function parseTaskMoveCommand(input: string): ParseResult<ParsedTaskMove>
   const basket = parseTaskBasket(basketInput);
 
   if (!shortId) {
-    return { ok: false, error: "Task short id is required." };
+    return { ok: false, error: "Потрібен короткий id задачі." };
   }
 
   if (!basket) {
-    return { ok: false, error: `Unknown basket: ${basketInput}\n\n${getTaskMoveUsage()}` };
+    return { ok: false, error: `Не знаю такого кошика: ${basketInput}\n\n${getTaskMoveUsage()}` };
   }
 
   return {

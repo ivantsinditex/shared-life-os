@@ -49,12 +49,12 @@ export function createTaskCommands(deps: TaskCommandDeps): void {
     const basket = input ? parseTaskBasket(input) : undefined;
 
     if (input && !basket) {
-      await ctx.reply(`Unknown basket: ${input}`);
+      await ctx.reply(`Не знаю такого кошика: ${input}`);
       return;
     }
 
     const tasks = await workTasks.list({ basket, status: "open" });
-    const title = basket ? `Open tasks in ${formatBasketLabel(basket)}` : "Open tasks";
+    const title = basket ? `Відкриті задачі: ${formatBasketLabel(basket)}` : "Відкриті задачі";
 
     await ctx.reply(formatTaskList(title, tasks));
   });
@@ -77,7 +77,7 @@ export function createTaskCommands(deps: TaskCommandDeps): void {
     const task = await workTasks.findByShortId(parsed.value.shortId);
 
     if (!task) {
-      await ctx.reply(`Task not found by short id: ${parsed.value.shortId}`);
+      await ctx.reply(`Не знайшов задачу з id: ${parsed.value.shortId}`);
       return;
     }
 
@@ -93,14 +93,14 @@ export function createTaskCommands(deps: TaskCommandDeps): void {
     const shortId = getCommandInput(ctx);
 
     if (!shortId) {
-      await ctx.reply("Use:\n/task_close short_id");
+      await ctx.reply("Формат:\n/task_close short_id");
       return;
     }
 
     const task = await workTasks.findByShortId(shortId);
 
     if (!task) {
-      await ctx.reply(`Task not found by short id: ${shortId}`);
+      await ctx.reply(`Не знайшов задачу з id: ${shortId}`);
       return;
     }
 
