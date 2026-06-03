@@ -318,7 +318,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
 
   bot.on("message:voice", async (ctx) => {
     if (!voiceTranscription.isEnabled()) {
-      await ctx.reply("Voice input is not configured yet. Set OPENAI_API_KEY and restart the bot.");
+      await ctx.reply(formatVoiceNotConfiguredHelp());
       return;
     }
 
@@ -346,7 +346,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
           telegramUserId: ctx.from?.id,
         });
 
-        await ctx.reply("Голос розпізнав, але не зміг виконати команду. Спробуй надіслати цей самий текст повідомленням.");
+        await ctx.reply(formatExecutionHelpMessage());
       }
     } catch (error) {
       logger.warn("Voice command failed", {
@@ -354,13 +354,13 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
         telegramUserId: ctx.from?.id,
       });
 
-      await ctx.reply("Voice processing failed. Please try again or send the command as text.");
+      await ctx.reply(formatVoiceProcessingHelpMessage());
     }
   });
 
   const handleNaturalPlanningText = async (ctx: Context, text: string): Promise<void> => {
     if (!planningTextParser.isEnabled()) {
-      await ctx.reply("Natural-language planning is not configured yet. Set OPENAI_API_KEY and restart the bot.");
+      await ctx.reply(formatNaturalPlanningNotConfiguredHelp());
       return;
     }
 
@@ -391,9 +391,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
           telegramUserId: ctx.from?.id,
         });
 
-        await ctx.reply(
-          "Асистент не встиг обробити великий план. Спробуй розбити його на 2-3 повідомлення або додати більше конкретики.",
-        );
+        await ctx.reply(formatAssistantTimeoutHelpMessage(text));
         return;
       }
 
@@ -409,7 +407,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     });
 
     if (parsed.action === "unknown") {
-      await ctx.reply(`I could not turn that into a plan yet: ${parsed.reason}`);
+      await ctx.reply(formatUnknownPlanningHelp(parsed.reason));
       return;
     }
 
@@ -716,7 +714,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     const failed = parsedActivities.find((item) => !item.parsed.ok);
 
     if (failed && !failed.parsed.ok) {
-      await ctx.reply(failed.parsed.error);
+      await ctx.reply(formatInvalidPlanHelp(failed.parsed.error));
       return;
     }
 
@@ -731,15 +729,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     const conflictMessages = await findPlanBatchConflictMessages(activities);
 
     if (conflictMessages.length > 0) {
-      await ctx.reply(
-        [
-          "Не можу створити весь пакет одним натисканням, бо частина активностей конфліктує з календарем або між собою.",
-          "",
-          ...conflictMessages,
-          "",
-          "Можеш уточнити час для цих активностей або надіслати їх окремо.",
-        ].join("\n"),
-      );
+      await ctx.reply(formatBatchConflictHelp(conflictMessages));
       return;
     }
 
@@ -1324,15 +1314,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     const conflictMessages = await findPlanBatchConflictMessages(activities);
 
     if (conflictMessages.length > 0) {
-      await ctx.reply(
-        [
-          "Не можу створити повторюваний план одним натисканням, бо частина активностей конфліктує.",
-          "",
-          ...conflictMessages,
-          "",
-          "Можеш уточнити інший час або попросити асистента підібрати вільні слоти.",
-        ].join("\n"),
-      );
+      await ctx.reply(formatRepeatedPlanConflictHelp(conflictMessages));
       return true;
     }
 
@@ -1392,7 +1374,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
         );
 
     if (!activity || activity.syncStatus === "deleted") {
-      await ctx.reply("Не знайшов активність, яку ти маєш на увазі. Спробуй /today або опиши дату/час.");
+      await ctx.reply(formatMissingActivityHelp("delete"));
       return;
     }
 
@@ -1413,7 +1395,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     const existing = findRecentActivity(ctx, action.activityId, action.titleContains);
 
     if (!existing || existing.syncStatus === "deleted") {
-      await ctx.reply("Не знайшов активність, яку треба оновити. Спробуй /today або опиши дату/час.");
+      await ctx.reply(formatMissingActivityHelp("update"));
       return;
     }
 
@@ -2659,4 +2641,137 @@ function formatErrorForTelegram(error: unknown): string {
   const singleLine = message.replace(/\s+/g, " ").trim();
 
   return singleLine.length > 400 ? `${singleLine.slice(0, 397)}...` : singleLine;
+}
+
+function formatVoiceNotConfiguredHelp(): string {
+  return [
+    "Голосові команди ще не налаштовані.",
+    "",
+    "Що перевірити:",
+    "1. У Railway має бути OPENAI_API_KEY.",
+    "2. Має бути OPENAI_TRANSCRIPTION_MODEL, наприклад gpt-4o-mini-transcribe.",
+    "3. Після зміни env треба перезапустити deploy.",
+  ].join("\n");
+}
+
+function formatNaturalPlanningNotConfiguredHelp(): string {
+  return [
+    "Я поки не можу обробляти природні команди.",
+    "",
+    "Що перевірити:",
+    "1. У Railway має бути OPENAI_API_KEY.",
+    "2. Має бути OPENAI_PLANNING_MODEL, наприклад gpt-4o-mini.",
+    "3. Після зміни env треба перезапустити deploy.",
+  ].join("\n");
+}
+
+function formatVoiceProcessingHelpMessage(): string {
+  return [
+    "Не зміг розпізнати голосове повідомлення.",
+    "",
+    "Спробуй так:",
+    "- говори коротше, 1-2 речення;",
+    "- або надішли той самий запит текстом.",
+    "",
+    "Приклад:",
+    "Додай на середу йогу для мене з 18:00 до 19:00.",
+  ].join("\n");
+}
+
+function formatExecutionHelpMessage(): string {
+  return [
+    "Голос розпізнав, але не зміг виконати команду.",
+    "",
+    "Спробуй сформулювати запит більш структуровано:",
+    "що зробити + для кого + коли + скільки часу.",
+    "",
+    "Приклади:",
+    "- Додай читання для мене сьогодні на 2 години у вільний слот.",
+    "- Додай до кінця тижня щодня воркаут для мене з 14:00 до 15:00.",
+    "- Видали всі мої події на сьогодні, крім йоги.",
+  ].join("\n");
+}
+
+function formatAssistantTimeoutHelpMessage(text: string): string {
+  const splitHint = looksLikeFlexibleSchedulingRequest(text)
+    ? "Якщо план великий, краще розбий: спочатку спорт, потім робота/читання/навчання."
+    : "Якщо план великий, розбий його на 2-3 повідомлення.";
+
+  return [
+    "Асистент не встиг обробити запит.",
+    "",
+    splitHint,
+    "",
+    "Приклади коректного формату:",
+    "- На решту тижня додай щодня 2 години читання і 2 години навчання у вільні слоти.",
+    "- Додай на середу, п'ятницю і неділю йогу з 18:00 до 19:00.",
+    "- На завтра: 09-11 зустріч, 11-16 робота з такими задачами: ...",
+  ].join("\n");
+}
+
+function formatUnknownPlanningHelp(reason: string): string {
+  return [
+    "Я не зрозумів, яку дію треба виконати.",
+    reason ? `Причина: ${reason}` : "",
+    "",
+    "Спробуй додати більше опорних деталей:",
+    "дія + назва + учасник + дата/день + час або тривалість.",
+    "",
+    "Приклади:",
+    "- Додай йогу для Вані сьогодні о 18:00 на 1 годину.",
+    "- Перенеси Настине тренування з середи на п'ятницю 19:00.",
+    "- Покажи події цього тижня для всіх.",
+  ].filter(Boolean).join("\n");
+}
+
+function formatInvalidPlanHelp(error: string): string {
+  return [
+    "Не зміг перетворити це на подію.",
+    `Що не так: ${error}`,
+    "",
+    "Найстабільніший формат:",
+    "/plan Назва | учасник | категорія | YYYY-MM-DD HH:mm | хвилини | приватність",
+    "",
+    "Приклад:",
+    "/plan Йога | vania | sport | 2026-06-03 18:00 | 60 | busy_only",
+  ].join("\n");
+}
+
+function formatBatchConflictHelp(conflictMessages: string[]): string {
+  return [
+    "Частина активностей конфліктує з календарем або між собою.",
+    "",
+    ...conflictMessages,
+    "",
+    "Як виправити:",
+    "- попроси: “знайди вільні слоти, заброньовані не використовуй”;",
+    "- або задай точні інші години для цих пунктів;",
+    "- або надішли конфліктні активності окремо.",
+  ].join("\n");
+}
+
+function formatRepeatedPlanConflictHelp(conflictMessages: string[]): string {
+  return [
+    "Повторюваний план має конфлікти.",
+    "",
+    ...conflictMessages,
+    "",
+    "Можеш сказати так:",
+    "Додай це до кінця тижня, але вибери сам вільні години і не використовуй заброньовані слоти.",
+  ].join("\n");
+}
+
+function formatMissingActivityHelp(action: "delete" | "update"): string {
+  const verb = action === "delete" ? "видалити" : "оновити";
+
+  return [
+    `Не знайшов активність, яку треба ${verb}.`,
+    "",
+    "Спробуй вказати день, час або назву активності.",
+    "",
+    "Приклади:",
+    "- Видали мою йогу сьогодні о 18:00.",
+    "- Заміни учасника в операційній роботі в середу з Насті на Ваню.",
+    "- Покажи /today або /week, а потім попроси змінити конкретну подію.",
+  ].join("\n");
 }
