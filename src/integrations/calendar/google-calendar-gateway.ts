@@ -11,6 +11,7 @@ export type CalendarEventDraft = {
   colorId?: string;
   visibility?: "default" | "public" | "private" | "confidential";
   transparency?: "opaque" | "transparent";
+  reminderMinutes?: number;
 };
 
 export type CalendarEventLink = {
@@ -161,5 +162,16 @@ function toGoogleEvent(draft: CalendarEventDraft) {
     visibility: draft.visibility ?? "default",
     transparency: draft.transparency ?? "opaque",
     colorId: draft.colorId,
+    reminders: draft.reminderMinutes === undefined
+      ? undefined
+      : {
+          useDefault: false,
+          overrides: [
+            {
+              method: "popup",
+              minutes: draft.reminderMinutes,
+            },
+          ],
+        },
   };
 }

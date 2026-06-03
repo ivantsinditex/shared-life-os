@@ -186,6 +186,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
         [
           "Google Calendar підключено.",
           "Тестовий запит до календаря успішний.",
+          `Нагадування для нових і оновлених подій: за ${config.googleEventReminderMinutes} хв.`,
           "",
           "Якщо є локальні активності з помилкою синхронізації, запусти /resync_calendar.",
         ].join("\n"),
@@ -699,6 +700,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
       calendar,
       logger,
       plannedActivities,
+      reminderMinutes: config.googleEventReminderMinutes,
     });
   }
 
@@ -975,6 +977,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
       calendar,
       logger,
       plannedActivities,
+      reminderMinutes: config.googleEventReminderMinutes,
     });
 
     rememberActivities(ctx, [synced]);
@@ -1143,6 +1146,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
         calendar,
         logger,
         plannedActivities,
+        reminderMinutes: config.googleEventReminderMinutes,
       });
 
       if (synced.syncStatus === "synced") {
@@ -1181,6 +1185,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
       calendar,
       logger,
       plannedActivities,
+      reminderMinutes: config.googleEventReminderMinutes,
     });
 
     await ctx.reply(formatActivitySyncResult(synced, formatActivitySaved(synced)));
@@ -2538,6 +2543,7 @@ async function syncActivityToCalendar(params: {
   calendar: CalendarGateway;
   logger: Logger;
   plannedActivities: PlannedActivityRepository;
+  reminderMinutes: number;
 }): Promise<PlannedActivity> {
   try {
     const draft = {
@@ -2549,6 +2555,7 @@ async function syncActivityToCalendar(params: {
       transparency: "opaque" as const,
       description: renderCalendarDescription(params.activity),
       colorId: renderCalendarColorId(params.activity),
+      reminderMinutes: params.reminderMinutes,
     };
     const event = params.activity.googleCalendarEventId
       ? await params.calendar.updateEvent(params.activity.googleCalendarEventId, draft)

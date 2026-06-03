@@ -5,6 +5,11 @@ const optionalTelegramUserId = z.preprocess(
   z.coerce.number().optional(),
 );
 
+const optionalReminderMinutes = z.preprocess(
+  (value) => (value === "" ? undefined : value),
+  z.coerce.number().int().nonnegative().default(30),
+);
+
 const configSchema = z.object({
   TELEGRAM_BOT_TOKEN: z.string().min(1, "TELEGRAM_BOT_TOKEN is required"),
   APP_TIMEZONE: z.string().default("Europe/Kiev"),
@@ -12,6 +17,7 @@ const configSchema = z.object({
   GOOGLE_CALENDAR_ID: z.string().optional(),
   GOOGLE_CLIENT_EMAIL: z.string().optional(),
   GOOGLE_PRIVATE_KEY: z.string().optional(),
+  GOOGLE_EVENT_REMINDER_MINUTES: optionalReminderMinutes,
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_TRANSCRIPTION_MODEL: z.string().default("gpt-4o-mini-transcribe"),
   OPENAI_PLANNING_MODEL: z.string().default("gpt-4o-mini"),
@@ -26,6 +32,7 @@ export type AppConfig = {
   googleCalendarId?: string;
   googleClientEmail?: string;
   googlePrivateKey?: string;
+  googleEventReminderMinutes: number;
   openAiApiKey?: string;
   openAiTranscriptionModel: string;
   openAiPlanningModel: string;
@@ -48,6 +55,7 @@ export function loadConfig(): AppConfig {
     googleCalendarId: env.GOOGLE_CALENDAR_ID,
     googleClientEmail: env.GOOGLE_CLIENT_EMAIL,
     googlePrivateKey: normalizeGooglePrivateKey(env.GOOGLE_PRIVATE_KEY),
+    googleEventReminderMinutes: env.GOOGLE_EVENT_REMINDER_MINUTES,
     openAiApiKey: env.OPENAI_API_KEY,
     openAiTranscriptionModel: env.OPENAI_TRANSCRIPTION_MODEL,
     openAiPlanningModel: env.OPENAI_PLANNING_MODEL,
