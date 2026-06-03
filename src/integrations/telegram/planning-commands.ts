@@ -473,7 +473,9 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     const nonCreateActions = actionsToHandle.filter((action) => action.type !== "draft_create");
 
     if (createActions.length > 1) {
-      await previewPlanBatch(ctx, createActions);
+      await previewPlanBatch(ctx, createActions, {
+        allowFlexibleReschedule: looksLikeFlexibleSchedulingRequest(text),
+      });
     } else if (createActions.length === 1) {
       await handleAgentAction(ctx, createActions[0]);
     }
@@ -705,6 +707,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
   async function previewPlanBatch(
     ctx: Context,
     actions: Array<Extract<AssistantAgentAction, { type: "draft_create" }>>,
+    options: { allowFlexibleReschedule?: boolean } = {},
   ): Promise<void> {
     const parsedActivities = actions.map((action) => ({
       action,
@@ -717,9 +720,14 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
       return;
     }
 
-    const activities = parsedActivities
+    let activities = parsedActivities
       .map((item) => (item.parsed.ok ? item.parsed.activity : undefined))
       .filter((activity): activity is NewPlannedActivity => Boolean(activity));
+
+    if (options.allowFlexibleReschedule) {
+      activities = await rescheduleConflictingBatchActivities(activities);
+    }
+
     const conflictMessages = await findPlanBatchConflictMessages(activities);
 
     if (conflictMessages.length > 0) {
@@ -746,6 +754,32 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
   }
 
   async function findPlanBatchConflictMessages(activities: NewPlannedActivity[]): Promise<string[]> {
+    const existingCandidates = await loadBatchConflictCandidates(activities);
+    const conflictMessages: string[] = [];
+
+    for (const [index, activity] of activities.entries()) {
+      const previousBatchActivities = activities.slice(0, index).map((candidate) => ({
+        ...candidate,
+        id: `pending-batch-${index}`,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        syncStatus: "pending" as const,
+      }));
+      const hasConflict = [...existingCandidates, ...previousBatchActivities].some((candidate) =>
+        activitiesConflict(activity, candidate),
+      );
+
+      if (hasConflict) {
+        conflictMessages.push(
+          `${index + 1}. ${activity.title} (${formatRange(activity.startsAt, activity.endsAt, activity.timezone)})`,
+        );
+      }
+    }
+
+    return conflictMessages;
+  }
+
+  async function loadBatchConflictCandidates(activities: NewPlannedActivity[]): Promise<PlannedActivity[]> {
     const startsAt = activities
       .map((activity) => Date.parse(activity.startsAt))
       .reduce((left, right) => Math.min(left, right));
@@ -770,29 +804,67 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     const externalCandidates = externalBusySlots
       .filter((slot) => !localCandidates.some((candidate) => timeRangesOverlap(slot, candidate)))
       .map((slot) => toExternalBusyActivity(slot, config.timezone));
-    const existingCandidates = [...localCandidates, ...externalCandidates];
-    const conflictMessages: string[] = [];
 
-    for (const [index, activity] of activities.entries()) {
-      const previousBatchActivities = activities.slice(0, index).map((candidate) => ({
-        ...candidate,
-        id: `pending-batch-${index}`,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        syncStatus: "pending" as const,
-      }));
-      const hasConflict = [...existingCandidates, ...previousBatchActivities].some((candidate) =>
-        activitiesConflict(activity, candidate),
-      );
+    return [...localCandidates, ...externalCandidates];
+  }
 
-      if (hasConflict) {
-        conflictMessages.push(
-          `${index + 1}. ${activity.title} (${formatRange(activity.startsAt, activity.endsAt, activity.timezone)})`,
-        );
-      }
+  async function rescheduleConflictingBatchActivities(activities: NewPlannedActivity[]): Promise<NewPlannedActivity[]> {
+    const existingCandidates = await loadBatchConflictCandidates(activities);
+    const scheduled: PlannedActivity[] = [];
+    const rescheduled: NewPlannedActivity[] = [];
+
+    for (const activity of activities) {
+      const conflicts = [...existingCandidates, ...scheduled].some((candidate) => activitiesConflict(activity, candidate));
+      const nextActivity = conflicts
+        ? findAvailableSlotForActivity(activity, [...existingCandidates, ...scheduled])
+        : activity;
+
+      rescheduled.push(nextActivity);
+      scheduled.push(toPendingActivity(nextActivity));
     }
 
-    return conflictMessages;
+    return rescheduled;
+  }
+
+  function findAvailableSlotForActivity(
+    activity: NewPlannedActivity,
+    candidates: PlannedActivity[],
+  ): NewPlannedActivity {
+    const start = DateTime.fromISO(activity.startsAt).setZone(activity.timezone);
+    const end = DateTime.fromISO(activity.endsAt).setZone(activity.timezone);
+    const durationMinutes = Math.round(end.diff(start, "minutes").minutes);
+    const dayStart = start.startOf("day").set({ hour: 8 });
+    const dayEnd = start.startOf("day").set({ hour: 22 });
+    let cursor = dayStart;
+
+    while (cursor.plus({ minutes: durationMinutes }) <= dayEnd) {
+      const candidate = {
+        ...activity,
+        startsAt: toIso(cursor),
+        endsAt: toIso(cursor.plus({ minutes: durationMinutes })),
+      };
+      const hasConflict = candidates.some((existing) => activitiesConflict(candidate, existing));
+
+      if (!hasConflict) {
+        return candidate;
+      }
+
+      cursor = cursor.plus({ minutes: 30 });
+    }
+
+    return activity;
+  }
+
+  function toPendingActivity(activity: NewPlannedActivity): PlannedActivity {
+    const now = new Date().toISOString();
+
+    return {
+      ...activity,
+      id: `pending-batch-${activity.startsAt}-${activity.title}`,
+      syncStatus: "pending",
+      createdAt: now,
+      updatedAt: now,
+    };
   }
 
   bot.callbackQuery(/^plan:create:(.+)$/, async (ctx) => {
@@ -1650,6 +1722,30 @@ function looksLikeLargePlanningRequest(text: string): boolean {
   ].filter((token) => normalized.includes(normalizeText(token))).length >= 3;
 
   return text.length > 220 && (hasWeeklyOrRepeatedScope || hasFlexibleScheduling) && hasManyActivitySignals;
+}
+
+function looksLikeFlexibleSchedulingRequest(text: string): boolean {
+  const normalized = normalizeText(text);
+
+  return [
+    "рандом",
+    "будь-як",
+    "будь як",
+    "сам вибери",
+    "сама вибери",
+    "сам розбер",
+    "сама розбер",
+    "знайди вильн",
+    "знайди вільн",
+    "вильни години",
+    "вільні години",
+    "заброньован",
+    "не використовуй",
+    "random",
+    "free slot",
+    "available",
+    "choose yourself",
+  ].some((token) => normalized.includes(normalizeText(token)));
 }
 
 export function buildDeterministicRepeatedPlan(
