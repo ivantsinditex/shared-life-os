@@ -22,3 +22,7 @@ export function buildTaskListKeyboard(tasks: WorkTask[]): InlineKeyboard | undef
 
   return keyboard;
 }
+
+export function buildCloseTaskKeyboard(taskId: string): InlineKeyboard {
+  return new InlineKeyboard().text("✓ Закрити задачу", `task:close:${taskId}`);
+}

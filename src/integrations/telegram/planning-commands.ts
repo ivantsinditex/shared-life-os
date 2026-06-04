@@ -67,7 +67,7 @@ import {
 } from "../../domain/time-entry-formatting.js";
 import type { TimeEntryRepository } from "../../domain/time-entry.js";
 import type { Logger } from "../../utils/logger.js";
-import { buildTaskListKeyboard } from "./task-keyboard.js";
+import { buildCloseTaskKeyboard, buildTaskListKeyboard } from "./task-keyboard.js";
 
 type PlanningCommandDeps = {
   bot: Bot;
@@ -671,7 +671,10 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
         endedAt: new Date().toISOString(),
       });
 
-      await ctx.reply(formatTimeStopped(updated, config.timezone));
+      await ctx.reply(
+        formatTimeStopped(updated, config.timezone),
+        updated.taskId ? { reply_markup: buildCloseTaskKeyboard(updated.taskId) } : undefined,
+      );
       return;
     }
 

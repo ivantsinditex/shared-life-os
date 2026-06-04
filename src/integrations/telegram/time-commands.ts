@@ -11,6 +11,7 @@ import {
 } from "../../domain/time-entry-formatting.js";
 import type { TimeEntryRepository } from "../../domain/time-entry.js";
 import type { WorkTaskRepository } from "../../domain/task.js";
+import { buildCloseTaskKeyboard } from "./task-keyboard.js";
 
 type TimeCommandDeps = {
   bot: Bot;
@@ -87,7 +88,10 @@ export function createTimeCommands(deps: TimeCommandDeps): void {
       endedAt: new Date().toISOString(),
     });
 
-    await ctx.reply(formatTimeStopped(updated, config.timezone));
+    await ctx.reply(
+      formatTimeStopped(updated, config.timezone),
+      updated.taskId ? { reply_markup: buildCloseTaskKeyboard(updated.taskId) } : undefined,
+    );
   });
 
   bot.command("time_status", async (ctx) => {
