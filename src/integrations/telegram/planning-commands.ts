@@ -117,7 +117,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
         "/sync_failed - show activities that need calendar retry",
         "/resync_calendar - refresh calendar titles and descriptions",
         "/whoami - show your Telegram identity mapping",
-        "/today - show today's planned activities",
+        "/today - show today's dashboard",
         "/week - show this week's planned activities",
         "/task_add - add a task to a basket",
         "/tasks - show open tasks",
@@ -1234,9 +1234,15 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
       startsAt: toIso(now.startOf("day")),
       endsAt: toIso(now.endOf("day")),
     });
+    const activeTimer = await timeEntries.getActive();
+    const openTasks = await workTasks.list({ status: "open" });
 
     rememberActivities(ctx, activities);
+    await ctx.reply(["Пульт дня", "", formatActiveTimeEntry(activeTimer, config.timezone)].join("\n"));
     await replyWithActivitySummary(ctx, "Сьогодні", activities, config.timezone);
+    await ctx.reply(formatTaskList("Відкриті задачі", openTasks), {
+      reply_markup: buildTaskListKeyboard(openTasks),
+    });
   });
 
   bot.command("week", async (ctx) => {
