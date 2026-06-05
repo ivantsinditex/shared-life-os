@@ -132,6 +132,13 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
         "/tasks - show open tasks",
         "/task_move - move a task to another basket",
         "/task_close - close a task",
+        "/work_dashboard - show work projects dashboard",
+        "/projects - show work projects",
+        "/project_add - create a work project",
+        "/project_rename - rename a work project",
+        "/project_delete - archive a work project",
+        "/project - show project tasks",
+        "/next_task - show next task by priority/deadline",
         "/time_start - start tracking work time",
         "/time_stop - stop active timer",
         "/time_status - show active timer",
@@ -1382,10 +1389,11 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     await replyWithActivitySummary(ctx, "Цей тиждень", activities, config.timezone);
   });
 
-  bot.on("message:text", async (ctx) => {
+  bot.on("message:text", async (ctx, next) => {
     const text = ctx.message.text.trim();
 
     if (!text || text.startsWith("/")) {
+      await next();
       return;
     }
 

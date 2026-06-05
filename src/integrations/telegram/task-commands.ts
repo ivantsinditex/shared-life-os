@@ -23,6 +23,7 @@ import {
 } from "../../domain/task-formatting.js";
 import { formatActiveTimeEntry, formatTimeStarted } from "../../domain/time-entry-formatting.js";
 import type { WorkTaskRepository } from "../../domain/task.js";
+import type { WorkProjectRepository } from "../../domain/work-project.js";
 import type { AppConfig } from "../../config/config.js";
 import type { TimeEntryRepository } from "../../domain/time-entry.js";
 import { buildProjectKeyboard, buildTaskListKeyboard, buildWorkDashboardKeyboard } from "./task-keyboard.js";
@@ -31,11 +32,12 @@ type TaskCommandDeps = {
   bot: Bot;
   config: AppConfig;
   timeEntries: TimeEntryRepository;
+  workProjects: WorkProjectRepository;
   workTasks: WorkTaskRepository;
 };
 
 export function createTaskCommands(deps: TaskCommandDeps): void {
-  const { bot, config, timeEntries, workTasks } = deps;
+  const { bot, config, timeEntries, workProjects, workTasks } = deps;
   const dashboardProjectsByChat = new Map<number, string[]>();
 
   bot.command("task_add", async (ctx) => {
@@ -76,7 +78,8 @@ export function createTaskCommands(deps: TaskCommandDeps): void {
 
   bot.command("work_dashboard", async (ctx) => {
     const tasks = await workTasks.list();
-    const projects = getProjectNames(tasks);
+    const storedProjects = await workProjects.list({ status: "active" });
+    const projects = getProjectNames(tasks, storedProjects.map((project) => project.name));
     const chatId = ctx.chat?.id;
 
     if (chatId) {
@@ -85,7 +88,78 @@ export function createTaskCommands(deps: TaskCommandDeps): void {
 
     const keyboard = buildWorkDashboardKeyboard(projects);
 
-    await ctx.reply(formatWorkDashboard(tasks), keyboard ? { reply_markup: keyboard } : undefined);
+    await ctx.reply(formatWorkDashboard(tasks, storedProjects.map((project) => project.name)), keyboard ? { reply_markup: keyboard } : undefined);
+  });
+
+  bot.command("projects", async (ctx) => {
+    const projects = await workProjects.list({ status: "active" });
+
+    if (projects.length === 0) {
+      await ctx.reply("Проектів ще немає.\n\nСтвори перший:\n/project_add Хмельпиво");
+      return;
+    }
+
+    await ctx.reply(["Проекти:", "", ...projects.map((project, index) => `${index + 1}. ${project.name}`)].join("\n"));
+  });
+
+  bot.command("project_add", async (ctx) => {
+    const name = getCommandInput(ctx);
+
+    if (!name) {
+      await ctx.reply("Формат:\n/project_add Назва проекту\n\nПриклад:\n/project_add Хмельпиво");
+      return;
+    }
+
+    const project = await workProjects.create({ name });
+
+    await ctx.reply(`Проект створено: ${project.name}`);
+  });
+
+  bot.command("project_rename", async (ctx) => {
+    const [oldName, newName] = splitPipeInput(getCommandInput(ctx));
+
+    if (!oldName || !newName) {
+      await ctx.reply("Формат:\n/project_rename Стара назва | Нова назва");
+      return;
+    }
+
+    const project = await workProjects.findByName(oldName);
+
+    if (!project || project.status !== "active") {
+      await ctx.reply(`Не знайшов активний проект: ${oldName}`);
+      return;
+    }
+
+    const updated = await workProjects.update({
+      ...project,
+      name: newName,
+    });
+
+    await ctx.reply(`Проект перейменовано: ${oldName} -> ${updated.name}`);
+  });
+
+  bot.command("project_delete", async (ctx) => {
+    const name = getCommandInput(ctx);
+
+    if (!name) {
+      await ctx.reply("Формат:\n/project_delete Назва проекту");
+      return;
+    }
+
+    const project = await workProjects.findByName(name);
+
+    if (!project || project.status !== "active") {
+      await ctx.reply(`Не знайшов активний проект: ${name}`);
+      return;
+    }
+
+    const archived = await workProjects.update({
+      ...project,
+      status: "archived",
+      archivedAt: new Date().toISOString(),
+    });
+
+    await ctx.reply(`Проект архівовано: ${archived.name}\nЗадачі не видалені.`);
   });
 
   bot.command("project", async (ctx) => {
@@ -269,4 +343,8 @@ function getCommandInput(ctx: Context): string {
   const [, ...rest] = text.split(" ");
 
   return rest.join(" ").trim();
+}
+
+function splitPipeInput(input: string): string[] {
+  return input.split("|").map((part) => part.trim()).filter(Boolean);
 }

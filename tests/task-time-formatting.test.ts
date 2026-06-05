@@ -34,6 +34,13 @@ describe("task formatting", () => {
     expect(sortTasksForWork(tasks)[0]?.title).toBe("P1 soon");
     expect(formatNextTask(sortTasksForWork(tasks)[0], "Хмельпиво")).toContain("P1 soon");
   });
+
+  it("includes empty stored projects in the dashboard", () => {
+    const dashboard = formatWorkDashboard([], ["Хмельпиво"]);
+
+    expect(dashboard).toContain("Хмельпиво");
+    expect(dashboard).toContain("Відкрито: 0");
+  });
 });
 
 describe("time entry formatting", () => {

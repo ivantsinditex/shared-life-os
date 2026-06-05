@@ -12,6 +12,7 @@ import { createTimeCommands } from "../integrations/telegram/time-commands.js";
 import { createVoiceTranscriptionGateway } from "../integrations/voice/openai-transcription-gateway.js";
 import { FilePlannedActivityRepository } from "../storage/file-planned-activity-repository.js";
 import { FileTimeEntryRepository } from "../storage/file-time-entry-repository.js";
+import { FileWorkProjectRepository } from "../storage/file-work-project-repository.js";
 import { FileWorkTaskRepository } from "../storage/file-work-task-repository.js";
 import { ConsoleLogger } from "../utils/logger.js";
 
@@ -23,6 +24,7 @@ export function createApp(config: AppConfig): App {
   const logger = new ConsoleLogger();
   const bot = new Bot(config.telegramBotToken);
   const plannedActivities = new FilePlannedActivityRepository(config.dataDir);
+  const workProjects = new FileWorkProjectRepository(config.dataDir);
   const workTasks = new FileWorkTaskRepository(config.dataDir);
   const timeEntries = new FileTimeEntryRepository(config.dataDir);
   const calendar = createCalendarGateway(config);
@@ -47,6 +49,7 @@ export function createApp(config: AppConfig): App {
     bot,
     config,
     timeEntries,
+    workProjects,
     workTasks,
   });
   createTimeCommands({
@@ -72,6 +75,7 @@ export function createApp(config: AppConfig): App {
       });
 
       await plannedActivities.init();
+      await workProjects.init();
       await workTasks.init();
       await timeEntries.init();
       await bot.start();

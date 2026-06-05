@@ -54,14 +54,14 @@ export function formatTaskList(title: string, tasks: WorkTask[]): string {
   ].join("\n");
 }
 
-export function formatWorkDashboard(tasks: WorkTask[]): string {
+export function formatWorkDashboard(tasks: WorkTask[], projectNames: string[] = []): string {
   const activeTasks = tasks.filter((task) => task.status !== "closed");
 
-  if (activeTasks.length === 0) {
+  if (activeTasks.length === 0 && projectNames.length === 0) {
     return "Робочий dashboard\n\nВідкритих задач немає.";
   }
 
-  const projects = groupTasksByProject(activeTasks);
+  const projects = groupTasksByProject(activeTasks, projectNames);
   const lines = ["Робочий dashboard", ""];
 
   for (const [project, projectTasks] of projects) {
@@ -107,8 +107,8 @@ export function formatNextTask(task: WorkTask | undefined, project?: string): st
   ].join("\n");
 }
 
-export function getProjectNames(tasks: WorkTask[]): string[] {
-  return Array.from(groupTasksByProject(tasks.filter((task) => task.status !== "closed")).keys());
+export function getProjectNames(tasks: WorkTask[], projectNames: string[] = []): string[] {
+  return Array.from(groupTasksByProject(tasks.filter((task) => task.status !== "closed"), projectNames).keys());
 }
 
 export function sortTasksForWork(tasks: WorkTask[]): WorkTask[] {
@@ -155,8 +155,16 @@ export function formatTaskLine(task: WorkTask): string {
   return `${task.id.slice(0, 8)} | ${formatBasketLabel(task.basket)}${project}${priority}${deadline}${participant}${status} | ${task.title}`;
 }
 
-function groupTasksByProject(tasks: WorkTask[]): Map<string, WorkTask[]> {
+function groupTasksByProject(tasks: WorkTask[], projectNames: string[] = []): Map<string, WorkTask[]> {
   const groups = new Map<string, WorkTask[]>();
+
+  for (const project of projectNames) {
+    const trimmed = project.trim();
+
+    if (trimmed) {
+      groups.set(trimmed, []);
+    }
+  }
 
   for (const task of tasks) {
     const project = task.project?.trim() || "Без проекту";
