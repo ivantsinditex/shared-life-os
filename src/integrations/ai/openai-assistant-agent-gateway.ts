@@ -356,6 +356,7 @@ function buildAgentPrompt(timezone: string, now: string, currentParticipant?: Ag
     "Family context: the household has seven members: Nastia, Vania, the dogs Drive/Драйв and Fedr/Федр, the cats Barney/Барні and Xiola/Ксіола, and Nastia's horse Gift/Подарунок. These animals are recurring real-life participants in events.",
     "Act like a helpful assistant, but never directly perform destructive actions. For deletes, return draft_delete_recent or draft_delete_many so the app can ask for confirmation.",
     "Create intent words such as зроби, постав, заплануй, створи, додай, schedule, plan, create, add mean draft_create unless the user clearly says to update/change/move/replace/delete an existing activity.",
+    "Never answer a create intent with only the event title. If the user says додай/заплануй/постав/створи and gives a day/date plus time, return draft_create.",
     "Update intent words are онови, зміни, перенеси, заміни, update, change, move, replace. Only use draft_update_recent when the user clearly refers to an existing activity.",
     "If the user asks to create several future activities in one message, return one draft_create action for every activity. Never turn one of the requested activities into a plain answer.",
     "For daily or weekly plan dictation, split the message into all concrete time blocks. A line like '05-08 біг' means a draft_create with start 05:00 and duration 180 minutes.",
@@ -425,6 +426,11 @@ export function normalizeAgentActions(params: {
   currentParticipant?: AgentParticipant;
 }): AssistantAgentAction[] {
   const createIntent = hasCreateIntent(params.text) && !hasExplicitUpdateOrDeleteIntent(params.text);
+  const fallbackCreateAction = createIntent ? buildCreateActionFromAnswerOnlyResult(params) : undefined;
+
+  if (fallbackCreateAction) {
+    return [normalizeDraftCreateAction(fallbackCreateAction, params)];
+  }
 
   return params.actions.map((action) => {
     const createAction = createIntent && action.type === "draft_update_recent"
@@ -437,6 +443,50 @@ export function normalizeAgentActions(params: {
 
     return createAction;
   });
+}
+
+function buildCreateActionFromAnswerOnlyResult(params: {
+  text: string;
+  actions: AssistantAgentAction[];
+  timezone: string;
+  now: string;
+  currentParticipant?: AgentParticipant;
+}): Extract<AssistantAgentAction, { type: "draft_create" }> | undefined {
+  if (params.actions.some((action) => action.type !== "answer")) {
+    return undefined;
+  }
+
+  const timeRange = detectTimeRange(params.text);
+
+  if (!timeRange || !hasDateSignal(params.text)) {
+    return undefined;
+  }
+
+  const answerTitle = params.actions
+    .find((action): action is Extract<AssistantAgentAction, { type: "answer" }> => action.type === "answer")
+    ?.message.trim();
+  const now = parseLocalDateTime(params.now, params.timezone);
+
+  if (!now.isValid) {
+    return undefined;
+  }
+
+  return {
+    type: "draft_create",
+    title: answerTitle || inferTitleFromCreateText(params.text),
+    participant: inferParticipant(params.text, params.currentParticipant),
+    category: inferCategory(params.text),
+    start: now
+      .set({
+        hour: timeRange.startHour,
+        minute: timeRange.startMinute,
+        second: 0,
+        millisecond: 0,
+      })
+      .toFormat("yyyy-MM-dd HH:mm"),
+    durationMinutes: timeRange.durationMinutes,
+    privacy: "shared_details",
+  };
 }
 
 function normalizeDraftCreateAction(
@@ -605,6 +655,76 @@ function detectExplicitNextWeekday(normalizedText: string, now: DateTime): DateT
   }
 
   return nextWeekdayFrom(now.startOf("day"), targetWeekday, { includeToday: false });
+}
+
+function hasDateSignal(text: string): boolean {
+  const normalized = normalizeText(text);
+
+  return Boolean(detectWeekday(text)) ||
+    Boolean(normalized.match(/\d{1,2}\s*(січня|января|january|лютого|февраля|february|березня|марта|march|квітня|апреля|april|травня|мая|may|червня|июня|june|липня|июля|july|серпня|августа|august|вересня|сентября|september|жовтня|октября|october|листопада|ноября|november|грудня|декабря|december)/)) ||
+    includesAny(normalized, [
+      "сьогодні",
+      "сегодня",
+      "today",
+      "завтра",
+      "tomorrow",
+      "післязавтра",
+      "послезавтра",
+      "наступн",
+      "следующ",
+      "next",
+      "через",
+    ]);
+}
+
+function detectTimeRange(text: string): {
+  startHour: number;
+  startMinute: number;
+  durationMinutes: number;
+} | undefined {
+  const normalized = normalizeText(text);
+  const match = normalized.match(
+    /(?:^|[^\d])(?:з|с|від|с\s+)?\s*(\d{1,2})(?::(\d{2}))?\s*(?:до|по|-|–|—)\s*(\d{1,2})(?::(\d{2}))?/u,
+  );
+
+  if (!match) {
+    return undefined;
+  }
+
+  const startHour = Number(match[1]);
+  const startMinute = match[2] ? Number(match[2]) : 0;
+  const endHour = Number(match[3]);
+  const endMinute = match[4] ? Number(match[4]) : 0;
+
+  if (
+    !Number.isInteger(startHour) ||
+    !Number.isInteger(startMinute) ||
+    !Number.isInteger(endHour) ||
+    !Number.isInteger(endMinute) ||
+    startHour < 0 ||
+    startHour > 23 ||
+    endHour < 0 ||
+    endHour > 23 ||
+    startMinute < 0 ||
+    startMinute > 59 ||
+    endMinute < 0 ||
+    endMinute > 59
+  ) {
+    return undefined;
+  }
+
+  const startTotalMinutes = startHour * 60 + startMinute;
+  let endTotalMinutes = endHour * 60 + endMinute;
+
+  if (endTotalMinutes <= startTotalMinutes) {
+    endTotalMinutes += 24 * 60;
+  }
+
+  return {
+    startHour,
+    startMinute,
+    durationMinutes: endTotalMinutes - startTotalMinutes,
+  };
 }
 
 function detectDirectDayOffset(normalizedText: string): number | undefined {
@@ -917,6 +1037,16 @@ function inferCategory(text: string): AgentCategory {
   }
 
   return "other";
+}
+
+function inferTitleFromCreateText(text: string): string {
+  const normalized = text
+    .replace(/^(додай|добав|заплануй|постав|створи|зроби|schedule|plan|create|add)\s+/i, "")
+    .replace(/\b(на|for)\s+(наступну|наступний|наступного|next)?\s*[^\d,.;]+/i, "")
+    .replace(/\s+з\s+\d{1,2}(:\d{2})?\s+(по|до|-|–|—)\s+\d{1,2}(:\d{2})?.*$/i, "")
+    .trim();
+
+  return normalized || "Подія";
 }
 
 function hasCreateIntent(text: string): boolean {

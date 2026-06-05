@@ -250,6 +250,31 @@ describe("normalizeAgentActions", () => {
     });
   });
 
+  it("turns answer-only create intent into a calendar draft", () => {
+    const [action] = normalizeAgentActions({
+      text: "Додай на наступну суботу поїздку на пасьбу з Настею з 17 по 20.",
+      actions: [
+        {
+          type: "answer",
+          message: "Поїздка на пасьбу",
+        },
+      ],
+      timezone: "Europe/Kiev",
+      now: "2026-06-05 12:32",
+      currentParticipant: "vania",
+    });
+
+    expect(action).toMatchObject({
+      type: "draft_create",
+      title: "Поїздка на пасьбу",
+      participant: "both",
+      category: "together",
+      start: "2026-06-06 17:00",
+      durationMinutes: 180,
+      privacy: "shared_details",
+    });
+  });
+
   it("understands a weekday through one week", () => {
     const [action] = normalizeAgentActions({
       text: "Заплануй суботу через одну неділю тренування з йоги на 13-14.",
