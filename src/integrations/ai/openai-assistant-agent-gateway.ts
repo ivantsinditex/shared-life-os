@@ -409,6 +409,7 @@ function buildAgentPrompt(timezone: string, now: string, currentParticipant?: Ag
     "If the user requests daily work/reading/learning blocks without exact hours, create one draft_create per day and choose available-looking times. Do not ask for exact hours just because the user allowed random hours.",
     "If the user asks to find free slots, avoid booked slots, or choose the time yourself, do not return ask_clarification for missing start time. Pick concrete local start times.",
     "For requests like 'на решту днів до кінця тижня по дві години навчання і дві години читання', return two draft_create actions per remaining day: one learning block and one reading block.",
+    "For 'до кінця тижня / until the end of this week', stop on the current local Sunday. Never include Monday of the next week to compensate for a past or skipped day.",
     "When the user says one activity should happen every day this week starting today, create it for every remaining day of the current local week including today. 'Через день' means every other day.",
     "If the user gives a soft preferred hour like 'можна о четвертій', schedule that activity at 16:00 unless it conflicts with a supplied explicit block; otherwise choose a nearby reasonable time.",
     "When a work block contains a comma-separated task list, create the calendar work block and also create one task_create action per concrete task. Put operational/операційка tasks in the operational basket, urgent/911 tasks in 911, deep work tasks in deep_work, random/light work/зустрічі in random, personal brand/особистий бренд in personal_brand.",
@@ -486,10 +487,13 @@ export function normalizeAgentActions(params: {
   }
 
   if (fallbackCreateAction) {
-    return [normalizeDraftCreateAction(fallbackCreateAction, params)];
+    return clampCreateActionsToCurrentWeekEnd(
+      [normalizeDraftCreateAction(fallbackCreateAction, params)],
+      params,
+    );
   }
 
-  return params.actions.map((action) => {
+  const normalizedActions = params.actions.map((action) => {
     const createAction = createIntent && action.type === "draft_update_recent"
       ? updateActionToCreateAction(action, params)
       : action;
@@ -499,6 +503,34 @@ export function normalizeAgentActions(params: {
     }
 
     return createAction;
+  });
+
+  return clampCreateActionsToCurrentWeekEnd(normalizedActions, params);
+}
+
+function clampCreateActionsToCurrentWeekEnd(
+  actions: AssistantAgentAction[],
+  params: { text: string; timezone: string; now: string },
+): AssistantAgentAction[] {
+  if (!hasEndOfCurrentWeekIntent(params.text)) {
+    return actions;
+  }
+
+  const now = parseLocalDateTime(params.now, params.timezone);
+
+  if (!now.isValid) {
+    return actions;
+  }
+
+  const currentWeekEnd = now.endOf("week");
+
+  return actions.filter((action) => {
+    if (action.type !== "draft_create") {
+      return true;
+    }
+
+    const start = parseLocalDateTime(action.start, params.timezone);
+    return !start.isValid || start <= currentWeekEnd;
   });
 }
 
@@ -732,6 +764,21 @@ function hasDateSignal(text: string): boolean {
       "next",
       "через",
     ]);
+}
+
+function hasEndOfCurrentWeekIntent(text: string): boolean {
+  const normalized = normalizeText(text);
+
+  return includesAny(normalized, [
+    "до кінця тижня",
+    "до кинця тижня",
+    "до кінця цього тижня",
+    "до конца недели",
+    "до конца этой недели",
+    "until the end of this week",
+    "through the end of this week",
+    "end of this week",
+  ]);
 }
 
 function detectTimeRange(text: string): {

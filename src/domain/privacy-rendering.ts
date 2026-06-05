@@ -112,6 +112,10 @@ function formatActivityIcon(activity: Pick<PlannedActivity, "title" | "participa
     return "🏋️";
   }
 
+  if (includesAny(title, ["бар", "bar", "випити", "пити в бар", "коктейл", "drink"])) {
+    return "🍸";
+  }
+
   if (includesAny(title, ["прогулян", "гуляти", "walk", "пасиб"])) {
     return "🚶";
   }

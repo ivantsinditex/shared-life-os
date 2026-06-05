@@ -69,6 +69,15 @@ describe("privacy rendering", () => {
         privacy: "shared_details",
       }),
     ).toBe("Разом · 🚶‍♂️🚶‍♀️ Прогулянка");
+
+    expect(
+      renderCalendarTitle({
+        title: "Пити в бар з друзями",
+        participant: "both",
+        category: "together",
+        privacy: "shared_details",
+      }),
+    ).toBe("Разом · 🍸 Пити в бар з друзями");
   });
 
   it("maps sensitive events to private Google visibility", () => {

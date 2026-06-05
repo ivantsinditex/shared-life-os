@@ -1628,7 +1628,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     const now = DateTime.now().setZone(config.timezone);
     const range = {
       startsAt: toIso(now.startOf("week")),
-      endsAt: toIso(now.endOf("week")),
+      endsAt: toIso(now.plus({ weeks: 1 }).startOf("week")),
     };
     const activities = await plannedActivities.listBetween({
       startsAt: range.startsAt,
@@ -2369,7 +2369,15 @@ export function buildDeterministicRepeatedPlan(
 
   const participant = getRepeatedActivityParticipant(normalized, options.currentParticipant);
   const now = DateTime.now().setZone(options.timezone);
-  const firstDay = now.startOf("day");
+  const today = now.startOf("day");
+  const firstDay = timeWindow && today.set({
+    hour: timeWindow.endHour,
+    minute: timeWindow.endMinute,
+    second: 0,
+    millisecond: 0,
+  }) <= now
+    ? today.plus({ days: 1 })
+    : today;
   const lastDay = now.endOf("week").startOf("day");
   const activities: NewPlannedActivity[] = [];
 
@@ -2533,7 +2541,7 @@ function getRepeatedActivityTimeWindow(normalizedText: string):
   | { startHour: number; startMinute: number; endHour: number; endMinute: number }
   | undefined {
   const numericRange = normalizedText.match(
-    /(?:з|від|с|from)?\s*(\d{1,2})(?::(\d{2}))?\s*(?:до|по|-|–|—|to)\s*(\d{1,2})(?::(\d{2}))?/,
+    /(?:з|від|с|from)?\s*(\d{1,2})(?::(\d{2}))?(?:\s*(?:години|година|год|дня|день|вечора|ранку))?\s*(?:до|по|-|–|—|to)\s*(\d{1,2})(?::(\d{2}))?/,
   );
 
   if (numericRange) {

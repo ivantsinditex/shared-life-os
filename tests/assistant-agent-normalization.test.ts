@@ -76,6 +76,50 @@ describe("normalizeAgentActions", () => {
     });
   });
 
+  it("keeps end-of-week create batches inside the current week", () => {
+    const actions = normalizeAgentActions({
+      text: "Заплануй до кінця тижня на кожен день по одному тренуванню воркаут з 14 дня по 3 дня.",
+      actions: [
+        {
+          ...baseCreateAction,
+          title: "Воркаут",
+          participant: "vania",
+          category: "sport",
+          start: "2026-06-06 14:00",
+          durationMinutes: 60,
+          privacy: "busy_only",
+        },
+        {
+          ...baseCreateAction,
+          title: "Воркаут",
+          participant: "vania",
+          category: "sport",
+          start: "2026-06-07 14:00",
+          durationMinutes: 60,
+          privacy: "busy_only",
+        },
+        {
+          ...baseCreateAction,
+          title: "Воркаут",
+          participant: "vania",
+          category: "sport",
+          start: "2026-06-08 14:00",
+          durationMinutes: 60,
+          privacy: "busy_only",
+        },
+      ],
+      timezone: "Europe/Kiev",
+      now: "2026-06-05 17:00",
+      currentParticipant: "vania",
+    });
+
+    expect(actions).toHaveLength(2);
+    expect(actions.map((action) => action.type === "draft_create" ? action.start : "")).toEqual([
+      "2026-06-06 14:00",
+      "2026-06-07 14:00",
+    ]);
+  });
+
   it("treats events with the human partner as together events", () => {
     const [action] = normalizeAgentActions({
       text: "Заплануй побачення з Настею на понеділок о 19.",
