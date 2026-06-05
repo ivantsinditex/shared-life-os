@@ -9,16 +9,23 @@ import {
 } from "../../domain/task-command-parser.js";
 import {
   formatBasketLabel,
+  formatNextTask,
+  formatProjectTaskList,
+  formatTaskBlocked,
   formatTaskClosed,
   formatTaskList,
   formatTaskMoved,
   formatTaskSaved,
+  formatTaskUnblocked,
+  formatWorkDashboard,
+  getProjectNames,
+  sortTasksForWork,
 } from "../../domain/task-formatting.js";
 import { formatActiveTimeEntry, formatTimeStarted } from "../../domain/time-entry-formatting.js";
 import type { WorkTaskRepository } from "../../domain/task.js";
 import type { AppConfig } from "../../config/config.js";
 import type { TimeEntryRepository } from "../../domain/time-entry.js";
-import { buildTaskListKeyboard } from "./task-keyboard.js";
+import { buildProjectKeyboard, buildTaskListKeyboard, buildWorkDashboardKeyboard } from "./task-keyboard.js";
 
 type TaskCommandDeps = {
   bot: Bot;
@@ -29,6 +36,7 @@ type TaskCommandDeps = {
 
 export function createTaskCommands(deps: TaskCommandDeps): void {
   const { bot, config, timeEntries, workTasks } = deps;
+  const dashboardProjectsByChat = new Map<number, string[]>();
 
   bot.command("task_add", async (ctx) => {
     const input = getCommandInput(ctx);
@@ -64,6 +72,39 @@ export function createTaskCommands(deps: TaskCommandDeps): void {
     const keyboard = buildTaskListKeyboard(tasks);
 
     await ctx.reply(formatTaskList(title, tasks), keyboard ? { reply_markup: keyboard } : undefined);
+  });
+
+  bot.command("work_dashboard", async (ctx) => {
+    const tasks = await workTasks.list();
+    const projects = getProjectNames(tasks);
+    const chatId = ctx.chat?.id;
+
+    if (chatId) {
+      dashboardProjectsByChat.set(chatId, projects);
+    }
+
+    const keyboard = buildWorkDashboardKeyboard(projects);
+
+    await ctx.reply(formatWorkDashboard(tasks), keyboard ? { reply_markup: keyboard } : undefined);
+  });
+
+  bot.command("project", async (ctx) => {
+    const project = getCommandInput(ctx);
+
+    if (!project) {
+      await ctx.reply("Формат:\n/project Назва проекту\n\nПриклад:\n/project Хмельпиво");
+      return;
+    }
+
+    await replyWithProject(ctx, project);
+  });
+
+  bot.command("next_task", async (ctx) => {
+    const project = getCommandInput(ctx) || undefined;
+    const tasks = await workTasks.list({ project, status: "open" });
+    const nextTask = sortTasksForWork(tasks)[0];
+
+    await ctx.reply(formatNextTask(nextTask, project));
   });
 
   bot.command("task_move", async (ctx) => {
@@ -166,6 +207,61 @@ export function createTaskCommands(deps: TaskCommandDeps): void {
     await ctx.answerCallbackQuery("Задачу закрито.");
     await ctx.reply(formatTaskClosed(updated));
   });
+
+  bot.callbackQuery(/^task:block:(.+)$/, async (ctx) => {
+    const task = await workTasks.getById(ctx.match[1]);
+
+    if (!task || task.status === "closed") {
+      await ctx.answerCallbackQuery("Задачу вже закрито або не знайдено.");
+      return;
+    }
+
+    const updated = await workTasks.update({
+      ...task,
+      status: "blocked",
+    });
+
+    await ctx.answerCallbackQuery("Задачу заблоковано.");
+    await ctx.reply(formatTaskBlocked(updated));
+  });
+
+  bot.callbackQuery(/^task:unblock:(.+)$/, async (ctx) => {
+    const task = await workTasks.getById(ctx.match[1]);
+
+    if (!task || task.status === "closed") {
+      await ctx.answerCallbackQuery("Задачу вже закрито або не знайдено.");
+      return;
+    }
+
+    const updated = await workTasks.update({
+      ...task,
+      status: "open",
+    });
+
+    await ctx.answerCallbackQuery("Задачу повернуто в роботу.");
+    await ctx.reply(formatTaskUnblocked(updated));
+  });
+
+  bot.callbackQuery(/^work:project:(\d+)$/, async (ctx) => {
+    const chatId = ctx.chat?.id;
+    const projects = chatId ? dashboardProjectsByChat.get(chatId) : undefined;
+    const project = projects?.[Number(ctx.match[1])];
+
+    if (!project) {
+      await ctx.answerCallbackQuery("Онови /work_dashboard і спробуй ще раз.");
+      return;
+    }
+
+    await ctx.answerCallbackQuery(project);
+    await replyWithProject(ctx, project);
+  });
+
+  async function replyWithProject(ctx: Context, project: string): Promise<void> {
+    const tasks = sortTasksForWork(await workTasks.list({ project }));
+    const keyboard = buildProjectKeyboard(tasks);
+
+    await ctx.reply(formatProjectTaskList(project, tasks), keyboard ? { reply_markup: keyboard } : undefined);
+  }
 }
 
 function getCommandInput(ctx: Context): string {

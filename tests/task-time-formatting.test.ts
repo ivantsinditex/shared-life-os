@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { formatTaskList, formatTaskSaved } from "../src/domain/task-formatting.js";
+import {
+  formatNextTask,
+  formatProjectTaskList,
+  formatTaskList,
+  formatTaskSaved,
+  formatWorkDashboard,
+  sortTasksForWork,
+} from "../src/domain/task-formatting.js";
 import { formatTimeStarted, formatTimeStopped, formatTimeSummary } from "../src/domain/time-entry-formatting.js";
 import type { WorkTask } from "../src/domain/task.js";
 import type { TimeEntry } from "../src/domain/time-entry.js";
@@ -12,6 +19,20 @@ describe("task formatting", () => {
     expect(formatTaskSaved(task)).toContain("Задачу збережено.");
     expect(formatTaskList("Відкриті задачі", [])).toContain("Відкритих задач немає.");
     expect(formatTaskList("Відкриті задачі", [task])).toContain("операційка");
+  });
+
+  it("formats project dashboard and sorts next work task", () => {
+    const tasks = [
+      makeTask({ title: "P4 old", priority: "P4", project: "Хмельпиво", deadline: "2026-06-10" }),
+      makeTask({ title: "P1 later", priority: "P1", project: "Хмельпиво", deadline: "2026-06-09" }),
+      makeTask({ title: "P1 soon", priority: "P1", project: "Хмельпиво", deadline: "2026-06-06" }),
+    ];
+
+    expect(formatWorkDashboard(tasks)).toContain("Хмельпиво");
+    expect(formatWorkDashboard(tasks)).toContain("P1: 2");
+    expect(formatProjectTaskList("Хмельпиво", tasks)).toContain("дедлайн 2026-06-06");
+    expect(sortTasksForWork(tasks)[0]?.title).toBe("P1 soon");
+    expect(formatNextTask(sortTasksForWork(tasks)[0], "Хмельпиво")).toContain("P1 soon");
   });
 });
 

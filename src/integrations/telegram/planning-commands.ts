@@ -57,11 +57,13 @@ import type { PlannedActivityRepository } from "../../domain/planned-activity.js
 import {
   formatBasketLabel,
   formatTaskClosed,
+  formatTaskLine,
   formatTaskList,
   formatTaskMoved,
   formatTaskSaved,
+  sortTasksForWork,
 } from "../../domain/task-formatting.js";
-import type { WorkTask, WorkTaskRepository } from "../../domain/task.js";
+import type { NewWorkTask, WorkTask, WorkTaskRepository } from "../../domain/task.js";
 import {
   formatActiveTimeEntry,
   formatTimeStarted,
@@ -100,6 +102,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
   } = deps;
   const pendingPlans = new Map<string, NewPlannedActivity>();
   const pendingPlanBatches = new Map<string, NewPlannedActivity[]>();
+  const pendingTaskBatches = new Map<string, NewWorkTask[]>();
   const pendingUpdates = new Map<string, PendingUpdate>();
   const pendingDeletes = new Map<string, PlannedActivity>();
   const pendingBulkDeletes = new Map<string, PendingBulkDelete>();
@@ -492,7 +495,10 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     const createActions = actionsToHandle.filter(
       (action): action is Extract<AssistantAgentAction, { type: "draft_create" }> => action.type === "draft_create",
     );
-    const nonCreateActions = actionsToHandle.filter((action) => action.type !== "draft_create");
+    const taskCreateActions = actionsToHandle.filter(
+      (action): action is Extract<AssistantAgentAction, { type: "task_create" }> => action.type === "task_create",
+    );
+    const nonCreateActions = actionsToHandle.filter((action) => action.type !== "draft_create" && action.type !== "task_create");
 
     const allowFlexibleReschedule = looksLikeFlexibleSchedulingRequest(text);
 
@@ -506,6 +512,12 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
       });
     } else if (createActions.length === 1) {
       await handleAgentAction(ctx, createActions[0]);
+    }
+
+    if (taskCreateActions.length > 1) {
+      await previewTaskBatch(ctx, taskCreateActions);
+    } else if (taskCreateActions.length === 1) {
+      await handleAgentAction(ctx, taskCreateActions[0]);
     }
 
     for (const action of nonCreateActions) {
@@ -595,6 +607,9 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
         title: action.title,
         basket: action.basket,
         participant: action.participant,
+        project: action.project,
+        priority: action.priority,
+        deadline: action.deadline,
       });
 
       rememberTasks(ctx, [task]);
@@ -603,12 +618,17 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     }
 
     if (action.type === "task_list") {
-      const tasks = await workTasks.list({ basket: action.basket, status: "open" });
+      const tasks = await workTasks.list({ basket: action.basket, project: action.project, status: "open" });
       const keyboard = buildTaskListKeyboard(tasks);
+      const title = action.project
+        ? `Відкриті задачі: ${action.project}`
+        : action.basket
+          ? `Відкриті задачі: ${formatBasketLabel(action.basket)}`
+          : "Відкриті задачі";
 
       rememberTasks(ctx, tasks);
       await ctx.reply(
-        formatTaskList(action.basket ? `Відкриті задачі: ${formatBasketLabel(action.basket)}` : "Відкриті задачі", tasks),
+        formatTaskList(title, sortTasksForWork(tasks)),
         keyboard ? { reply_markup: keyboard } : undefined,
       );
       return;
@@ -826,6 +846,28 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     return conflictMessages;
   }
 
+  async function previewTaskBatch(
+    ctx: Context,
+    actions: Array<Extract<AssistantAgentAction, { type: "task_create" }>>,
+  ): Promise<void> {
+    const tasks = actions.map((action) => ({
+      title: action.title,
+      basket: action.basket,
+      participant: action.participant,
+      project: action.project,
+      priority: action.priority,
+      deadline: action.deadline,
+    }));
+    const token = randomUUID();
+    pendingTaskBatches.set(token, tasks);
+
+    await ctx.reply(formatTaskBatchConfirmation(tasks), {
+      reply_markup: new InlineKeyboard()
+        .text(`Додати всі ${tasks.length}`, `task:create-batch:${token}`)
+        .text("Скасувати", `task:cancel-batch:${token}`),
+    });
+  }
+
   async function loadBatchConflictCandidates(activities: NewPlannedActivity[]): Promise<PlannedActivity[]> {
     const startsAt = activities
       .map((activity) => Date.parse(activity.startsAt))
@@ -1000,6 +1042,28 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     await ctx.reply(formatPlanBatchSaved(syncedActivities));
   });
 
+  bot.callbackQuery(/^task:create-batch:(.+)$/, async (ctx) => {
+    const token = ctx.match[1];
+    const tasks = pendingTaskBatches.get(token);
+
+    await ctx.answerCallbackQuery();
+
+    if (!tasks) {
+      await ctx.reply("Підтвердження задач застаріло. Надішли список ще раз.");
+      return;
+    }
+
+    pendingTaskBatches.delete(token);
+
+    const createdTasks: WorkTask[] = [];
+    for (const task of tasks) {
+      createdTasks.push(await workTasks.create(task));
+    }
+
+    rememberTasks(ctx, createdTasks);
+    await ctx.reply(formatTaskBatchSaved(createdTasks));
+  });
+
   bot.callbackQuery(/^plan:cancel:(.+)$/, async (ctx) => {
     pendingPlans.delete(ctx.match[1]);
     await ctx.answerCallbackQuery();
@@ -1010,6 +1074,12 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     pendingPlanBatches.delete(ctx.match[1]);
     await ctx.answerCallbackQuery();
     await ctx.reply("Пакетне планування скасовано. Нічого не збережено.");
+  });
+
+  bot.callbackQuery(/^task:cancel-batch:(.+)$/, async (ctx) => {
+    pendingTaskBatches.delete(ctx.match[1]);
+    await ctx.answerCallbackQuery();
+    await ctx.reply("Додавання задач скасовано. Нічого не збережено.");
   });
 
   bot.callbackQuery(/^plan:alternative:(.+):(\d+)$/, async (ctx) => {
@@ -1458,7 +1528,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     }
 
     if (action.type === "task_create") {
-      return `створив задачу "${action.title}" у кошику ${action.basket}`;
+      return `створив задачу "${action.title}"${action.project ? ` у проекті ${action.project}` : ""} у кошику ${action.basket}`;
     }
 
     if (action.type === "ask_clarification") {
@@ -2858,6 +2928,37 @@ function formatPlanBatchSaved(activities: PlannedActivity[]): string {
     "",
     ...lines,
   ].filter(Boolean).join("\n");
+}
+
+function formatTaskBatchConfirmation(tasks: NewWorkTask[]): string {
+  const project = tasks.find((task) => task.project)?.project;
+  const lines = tasks.map((task, index) =>
+    [
+      `${index + 1}.`,
+      task.priority ?? "P4",
+      "|",
+      task.project ?? "без проекту",
+      "|",
+      formatBasketLabel(task.basket),
+      task.deadline ? `| дедлайн ${task.deadline}` : "",
+      "|",
+      task.title,
+    ].filter(Boolean).join(" "),
+  );
+
+  return [
+    project ? `Додати ${tasks.length} задачі в ${project}?` : `Додати ${tasks.length} задачі?`,
+    "",
+    ...lines,
+  ].join("\n");
+}
+
+function formatTaskBatchSaved(tasks: WorkTask[]): string {
+  return [
+    `Додано задач: ${tasks.length}.`,
+    "",
+    ...tasks.map((task, index) => `${index + 1}. ${formatTaskLine(task)}`),
+  ].join("\n");
 }
 
 async function syncActivityToCalendar(params: {

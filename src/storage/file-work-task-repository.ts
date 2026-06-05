@@ -50,13 +50,14 @@ export class FileWorkTaskRepository implements WorkTaskRepository {
     return created;
   }
 
-  async list(params: { basket?: TaskBasket; status?: TaskStatus } = {}): Promise<WorkTask[]> {
+  async list(params: { basket?: TaskBasket; project?: string; status?: TaskStatus } = {}): Promise<WorkTask[]> {
     return this.tasks
       .filter((task) => {
         const basketMatches = !params.basket || task.basket === params.basket;
+        const projectMatches = !params.project || normalizeProject(task.project) === normalizeProject(params.project);
         const statusMatches = !params.status || task.status === params.status;
 
-        return basketMatches && statusMatches;
+        return basketMatches && projectMatches && statusMatches;
       })
       .sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt));
   }
@@ -99,4 +100,8 @@ function isMissingFile(error: unknown): boolean {
     "code" in error &&
     (error as NodeJS.ErrnoException).code === "ENOENT"
   );
+}
+
+function normalizeProject(project: string | undefined): string {
+  return (project ?? "").trim().toLowerCase();
 }

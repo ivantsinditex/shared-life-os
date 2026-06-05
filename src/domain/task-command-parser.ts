@@ -1,5 +1,5 @@
 import { participants, type Participant } from "./planned-activity.js";
-import { taskBaskets, type TaskBasket } from "./task.js";
+import { taskBaskets, taskPriorities, type TaskBasket, type TaskPriority } from "./task.js";
 
 type ParseResult<T> =
   | { ok: true; value: T }
@@ -9,6 +9,9 @@ export type ParsedTaskAdd = {
   title: string;
   basket: TaskBasket;
   participant?: Participant;
+  project?: string;
+  priority?: TaskPriority;
+  deadline?: string;
 };
 
 export type ParsedTaskMove = {
@@ -19,10 +22,10 @@ export type ParsedTaskMove = {
 export function getTaskAddUsage(): string {
   return [
     "Формат:",
-    "/task_add Title | basket | participant",
+    "/task_add Title | basket | participant | project | priority | deadline",
     "",
     "Приклад:",
-    "/task_add Reply to urgent client | 911 | vania",
+    "/task_add ТЗ на креативи | operational | nastia | Хмельпиво | P1 | 2026-06-06",
     "",
     `Кошики: ${taskBaskets.join(", ")}`,
     `Учасники: ${participants.join(", ")} (необов'язково)`,
@@ -44,11 +47,11 @@ export function getTaskMoveUsage(): string {
 export function parseTaskAddCommand(input: string): ParseResult<ParsedTaskAdd> {
   const parts = splitCommand(input);
 
-  if (parts.length < 2 || parts.length > 3) {
+  if (parts.length < 2 || parts.length > 6) {
     return { ok: false, error: getTaskAddUsage() };
   }
 
-  const [title, basketInput, participantInput] = parts;
+  const [title, basketInput, participantInput, projectInput, priorityInput, deadlineInput] = parts;
   const basket = parseTaskBasket(basketInput);
 
   if (!title) {
@@ -65,12 +68,21 @@ export function parseTaskAddCommand(input: string): ParseResult<ParsedTaskAdd> {
     return { ok: false, error: `Не знаю такого учасника: ${participantInput}` };
   }
 
+  const priority = priorityInput ? parseTaskPriority(priorityInput) : undefined;
+
+  if (priorityInput && !priority) {
+    return { ok: false, error: `Не знаю такого пріоритету: ${priorityInput}. Можна: ${taskPriorities.join(", ")}` };
+  }
+
   return {
     ok: true,
     value: {
       title,
       basket,
       participant,
+      project: projectInput,
+      priority,
+      deadline: deadlineInput,
     },
   };
 }
@@ -145,6 +157,12 @@ export function parseParticipant(input: string): Participant | undefined {
   };
 
   return aliases[normalized] ?? participants.find((participant) => participant === normalized);
+}
+
+export function parseTaskPriority(input: string): TaskPriority | undefined {
+  const normalized = input.trim().toUpperCase();
+
+  return taskPriorities.find((priority) => priority === normalized);
 }
 
 function splitCommand(input: string): string[] {

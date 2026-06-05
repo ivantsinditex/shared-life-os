@@ -3,7 +3,7 @@ import { DateTime } from "luxon";
 
 import type { AppConfig } from "../../config/config.js";
 import type { PlannedActivity } from "../../domain/planned-activity.js";
-import type { TaskBasket, WorkTask } from "../../domain/task.js";
+import type { TaskBasket, TaskPriority, WorkTask } from "../../domain/task.js";
 import type { TimeEntry } from "../../domain/time-entry.js";
 import type {
   ParsedPlanningKeepRule,
@@ -94,10 +94,14 @@ export type AssistantAgentAction =
       title: string;
       basket: TaskBasket;
       participant?: AgentParticipant;
+      project?: string;
+      priority?: TaskPriority;
+      deadline?: string;
     }
   | {
       type: "task_list";
       basket?: TaskBasket;
+      project?: string;
     }
   | {
       type: "task_move_recent";
@@ -218,6 +222,9 @@ const agentResponseSchema = z.object({
       task_title: z.string(),
       task_basket: z.enum(["911", "operational", "deep_work", "random", "personal_brand", "other", ""]),
       task_participant: z.enum(["vania", "nastia", "both", ""]),
+      task_project: z.string(),
+      task_priority: z.enum(["P1", "P2", "P3", "P4", ""]),
+      task_deadline: z.string(),
       target_task_basket: z.enum(["911", "operational", "deep_work", "random", "personal_brand", "other", ""]),
       time_basket: z.enum(["911", "operational", "deep_work", "random", "personal_brand", "other", ""]),
       time_title: z.string(),
@@ -402,8 +409,13 @@ function buildAgentPrompt(timezone: string, now: string, currentParticipant?: Ag
     "Prefer a concise Ukrainian or English reply matching the user's language.",
     "If you can resolve a follow-up from recent activities, use the exact recent activity id.",
     "You also manage work task baskets. Baskets: 911, operational, deep_work, random, personal_brand, other.",
-    "For requests like add/закинь/додай task to 911/операційка/deep work, return task_create.",
-    "For requests like show/list/покажи 911/операційку/tasks, return task_list.",
+    "You also manage work projects with arbitrary names, for example Хмельпиво, Re.emotional, Bar, Ralston, Everlab.",
+    "For requests like add/закинь/додай task to 911/операційка/deep work/project backlog, return task_create. Fill task_project when the user names a project, task_priority as P1/P2/P3/P4 when mentioned, and task_deadline as local YYYY-MM-DD when mentioned.",
+    "For several tasks in one message, return one task_create action per concrete task. Keep the same task_project for all tasks when the user says 'у Хмельпиво/для проекту Хмельпиво'.",
+    "Deadline phrases: сьогодні -> current local date, завтра -> next day, пт/п'ятниця -> nearest future Friday unless user says current week/next week. Use YYYY-MM-DD.",
+    "If priority is missing but the task sounds urgent/911/сьогодні/терміново, use P1. If priority is missing otherwise, use P4.",
+    "For requests like show/list/покажи 911/операційку/tasks or project backlog, return task_list. Fill task_project when a project is named.",
+    "For 'next task/наступна задача' return task_list with the project if named; the application will choose the highest priority task.",
     "For requests like move/перенеси this task to deep work, return task_move_recent with the matching open task id and target basket.",
     "For requests like close/done/закрий task, return task_close_recent with the matching open task id.",
     "Use open_tasks to resolve task follow-ups like this task, last task, цю задачу, останню задачу, or title references.",
@@ -1136,6 +1148,9 @@ function toOpenTaskContext(task: WorkTask): Record<string, string> {
     short_id: task.id.slice(0, 8),
     title: task.title,
     basket: task.basket,
+    project: task.project ?? "",
+    priority: task.priority ?? "",
+    deadline: task.deadline ?? "",
     participant: task.participant ?? "",
     status: task.status,
     created_at: task.createdAt,
@@ -1265,6 +1280,9 @@ function toAgentAction(action: z.infer<typeof agentResponseSchema>["actions"][nu
       title: action.task_title || action.title,
       basket: action.task_basket as TaskBasket,
       participant: emptyToUndefined(action.task_participant) as AgentParticipant | undefined,
+      project: emptyToUndefined(action.task_project),
+      priority: emptyToUndefined(action.task_priority) as TaskPriority | undefined,
+      deadline: normalizeTaskDeadline(action.task_deadline),
     };
   }
 
@@ -1272,6 +1290,7 @@ function toAgentAction(action: z.infer<typeof agentResponseSchema>["actions"][nu
     return {
       type: "task_list",
       basket: emptyToUndefined(action.task_basket) as TaskBasket | undefined,
+      project: emptyToUndefined(action.task_project),
     };
   }
 
@@ -1358,6 +1377,18 @@ function emptyToUndefined(value: string): string | undefined {
   return trimmed ? trimmed : undefined;
 }
 
+function normalizeTaskDeadline(value: string): string | undefined {
+  const trimmed = value.trim();
+
+  if (!trimmed) {
+    return undefined;
+  }
+
+  const dateOnly = /^(\d{4}-\d{2}-\d{2})/.exec(trimmed)?.[1];
+
+  return dateOnly ?? trimmed;
+}
+
 const agentPlanSchema = {
   type: "object",
   additionalProperties: false,
@@ -1392,6 +1423,9 @@ const agentPlanSchema = {
           "task_title",
           "task_basket",
           "task_participant",
+          "task_project",
+          "task_priority",
+          "task_deadline",
           "target_task_basket",
           "time_basket",
           "time_title",
@@ -1466,6 +1500,9 @@ const agentPlanSchema = {
             enum: ["911", "operational", "deep_work", "random", "personal_brand", "other", ""],
           },
           task_participant: { type: "string", enum: ["vania", "nastia", "both", ""] },
+          task_project: { type: "string" },
+          task_priority: { type: "string", enum: ["P1", "P2", "P3", "P4", ""] },
+          task_deadline: { type: "string" },
           target_task_basket: {
             type: "string",
             enum: ["911", "operational", "deep_work", "random", "personal_brand", "other", ""],

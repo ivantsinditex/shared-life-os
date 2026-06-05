@@ -8,7 +8,7 @@ import {
 
 describe("task command parser", () => {
   it("parses task add commands", () => {
-    const parsed = parseTaskAddCommand("Reply to client | 911 | vania");
+    const parsed = parseTaskAddCommand("Reply to client | 911 | vania | Хмельпиво | P1 | 2026-06-06");
 
     expect(parsed).toEqual({
       ok: true,
@@ -16,6 +16,9 @@ describe("task command parser", () => {
         title: "Reply to client",
         basket: "911",
         participant: "vania",
+        project: "Хмельпиво",
+        priority: "P1",
+        deadline: "2026-06-06",
       },
     });
   });
