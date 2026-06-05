@@ -22,25 +22,26 @@ export type ParsedTaskMove = {
 export function getTaskAddUsage(): string {
   return [
     "Формат:",
-    "/task_add Title | basket | participant | project | priority | deadline",
+    "/task_add Назва | кошик | учасник | проект | пріоритет | дедлайн",
     "",
     "Приклад:",
-    "/task_add ТЗ на креативи | operational | nastia | Хмельпиво | P1 | 2026-06-06",
+    "/task_add ТЗ на креативи | операційка | Настя | Хмельпиво | P1 | 2026-06-06",
     "",
-    `Кошики: ${taskBaskets.join(", ")}`,
-    `Учасники: ${participants.join(", ")} (необов'язково)`,
+    "Кошики: 911, операційка, deep work, рандом, особистий бренд, інше",
+    "Учасники: Ваня, Настя, Разом (необов'язково)",
+    "Пріоритет: P1, P2, P3, P4. Дедлайн: YYYY-MM-DD.",
   ].join("\n");
 }
 
 export function getTaskMoveUsage(): string {
   return [
     "Формат:",
-    "/task_move short_id | basket",
+    "/task_move короткий_id | новий кошик",
     "",
     "Приклад:",
-    "/task_move ab12cd34 | deep_work",
+    "/task_move ab12cd34 | deep work",
     "",
-    `Кошики: ${taskBaskets.join(", ")}`,
+    "Кошики: 911, операційка, deep work, рандом, особистий бренд, інше",
   ].join("\n");
 }
 
@@ -127,14 +128,19 @@ export function parseTaskBasket(input: string): TaskBasket | undefined {
     ops: "operational",
     deep: "deep_work",
     deep_work: "deep_work",
+    глибока_робота: "deep_work",
+    фокус: "deep_work",
     focus: "deep_work",
     random: "random",
     рандом: "random",
     бренд: "personal_brand",
     personal_brand: "personal_brand",
+    особистий_бренд: "personal_brand",
+    персональний_бренд: "personal_brand",
     brand: "personal_brand",
     other: "other",
     інше: "other",
+    інші: "other",
   };
 
   return aliases[normalized] ?? taskBaskets.find((basket) => basket === normalized);
