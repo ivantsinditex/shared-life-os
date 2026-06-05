@@ -149,4 +149,55 @@ describe("normalizeAgentActions", () => {
       start: "2026-06-11 10:00",
     });
   });
+
+  it("keeps solo yoga requests on the current participant with public details by default", () => {
+    const [action] = normalizeAgentActions({
+      text: "Заплануй на наступний вівторок тренування з йоги на 13-14.",
+      actions: [
+        {
+          ...baseCreateAction,
+          title: "Тренування з йоги",
+          participant: "both",
+          category: "sport",
+          start: "2026-06-13 13:00",
+          privacy: "busy_only",
+        },
+      ],
+      timezone: "Europe/Kiev",
+      now: "2026-06-05 11:23",
+      currentParticipant: "vania",
+    });
+
+    expect(action).toMatchObject({
+      type: "draft_create",
+      participant: "vania",
+      category: "sport",
+      start: "2026-06-09 13:00",
+      privacy: "shared_details",
+    });
+  });
+
+  it("keeps busy-only privacy only when the user explicitly asks for it", () => {
+    const [action] = normalizeAgentActions({
+      text: "Заплануй йогу на вівторок о 13, показувати тільки зайнятість.",
+      actions: [
+        {
+          ...baseCreateAction,
+          title: "Йога",
+          participant: "vania",
+          category: "sport",
+          start: "2026-06-09 13:00",
+          privacy: "shared_details",
+        },
+      ],
+      timezone: "Europe/Kiev",
+      now: "2026-06-05 11:23",
+      currentParticipant: "vania",
+    });
+
+    expect(action).toMatchObject({
+      type: "draft_create",
+      privacy: "busy_only",
+    });
+  });
 });

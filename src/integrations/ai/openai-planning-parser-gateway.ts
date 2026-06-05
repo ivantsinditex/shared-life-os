@@ -239,7 +239,7 @@ function buildSystemPrompt(timezone: string, now: string): string {
     "Participants: vania means Vania/Ivan/Vanya/мені/мене/Іван/Ваня; nastia means Nastia/Настя; both means together/us/разом/нам.",
     "Categories: sport, work, learning, reading, dogs, horse, care, together, other.",
     "Privacy: busy only/busy/зайнятий -> busy_only; private/приватно -> private; shared details/details/деталі -> shared_details.",
-    "If privacy is omitted for a plan, use busy_only by default.",
+    "If privacy is omitted for a plan, use shared_details by default.",
     "Yoga, workout, gym, run, йога, воркаут, зал, пробіжка are sport.",
     "If the user says me/my/мені/моє/мого, use participant vania.",
     "Use 24-hour local time formatted as YYYY-MM-DD HH:mm.",

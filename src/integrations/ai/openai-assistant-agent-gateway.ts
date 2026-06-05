@@ -391,7 +391,7 @@ function buildAgentPrompt(timezone: string, now: string, currentParticipant?: Ag
     "Categories: подарунок/конюшня/кінь/верхова їзда/horse/riding -> horse. Dates/побачення/вечір разом/зустріч для пари -> together.",
     "For 'побачення з Ванею/Настею', create a calendar activity with participant both and category together, because it involves the current user plus the named partner.",
     "Ukrainian time phrase 'на третю годину' usually means 15:00 unless morning/night is explicit. 'на десяту' usually means 10:00.",
-    "Default privacy for created activities is busy_only unless user asks private or shared details.",
+    "Default privacy for created activities is shared_details unless the user asks private, приватно, busy only, or показувати тільки зайнятість.",
     "Default duration is 60 minutes only when user implies an activity but omits duration.",
     "For draft_create start, use local format YYYY-MM-DD HH:mm, not ISO.",
     "For list/delete scope_start and scope_end, use local format YYYY-MM-DD HH:mm, not ISO.",
@@ -457,6 +457,8 @@ function normalizeDraftCreateAction(
 
   return {
     ...normalizedFamilyAction,
+    participant: normalizeParticipant(normalizedFamilyAction.participant, params.text, params.currentParticipant),
+    privacy: normalizePrivacy(normalizedFamilyAction.privacy, params.text),
     start: normalizedStart,
   };
 }
@@ -482,7 +484,7 @@ function updateActionToCreateAction(
       category: action.category ?? inferCategory(params.text),
       start: action.start ?? params.now,
       durationMinutes: action.durationMinutes ?? 60,
-      privacy: action.privacy ?? "busy_only",
+      privacy: action.privacy ?? "shared_details",
     },
     params,
   );
@@ -666,6 +668,36 @@ function normalizeFamilySemantics(
   }
 
   return action;
+}
+
+function normalizeParticipant(
+  participant: AgentParticipant,
+  text: string,
+  currentParticipant?: AgentParticipant,
+): AgentParticipant {
+  if (mentionsHumanPartner(text, currentParticipant)) {
+    return "both";
+  }
+
+  if (participant === "both" && currentParticipant) {
+    return currentParticipant;
+  }
+
+  return participant;
+}
+
+function normalizePrivacy(privacy: AgentPrivacy, text: string): AgentPrivacy {
+  const normalized = normalizeText(text);
+
+  if (includesAny(normalized, ["private", "приватно", "приватна", "приватний"])) {
+    return "private";
+  }
+
+  if (includesAny(normalized, ["busy only", "тільки зайнятість", "лише зайнятість", "показувати тільки зайнятість"])) {
+    return "busy_only";
+  }
+
+  return "shared_details";
 }
 
 function inferParticipant(text: string, currentParticipant?: AgentParticipant): AgentParticipant {
