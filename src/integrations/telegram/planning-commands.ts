@@ -790,7 +790,8 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
         updatedAt: new Date().toISOString(),
         syncStatus: "pending" as const,
       }));
-      const hasConflict = [...existingCandidates, ...previousBatchActivities].some((candidate) =>
+      const candidates = conflictCandidatesForActivity(activity, [...existingCandidates, ...previousBatchActivities]);
+      const hasConflict = candidates.some((candidate) =>
         activitiesConflict(activity, candidate),
       );
 
@@ -826,9 +827,11 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
       });
     }
 
-    const externalCandidates = externalBusySlots
+    const externalCandidates = activities.some((activity) => activity.participant === "both")
+      ? externalBusySlots
       .filter((slot) => !localCandidates.some((candidate) => timeRangesOverlap(slot, candidate)))
-      .map((slot) => toExternalBusyActivity(slot, config.timezone));
+      .map((slot) => toExternalBusyActivity(slot, config.timezone))
+      : [];
 
     return [...localCandidates, ...externalCandidates];
   }
@@ -839,9 +842,10 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     const rescheduled: NewPlannedActivity[] = [];
 
     for (const activity of activities) {
-      const conflicts = [...existingCandidates, ...scheduled].some((candidate) => activitiesConflict(activity, candidate));
+      const candidates = conflictCandidatesForActivity(activity, [...existingCandidates, ...scheduled]);
+      const conflicts = candidates.some((candidate) => activitiesConflict(activity, candidate));
       const nextActivity = conflicts
-        ? findAvailableSlotForActivity(activity, [...existingCandidates, ...scheduled])
+        ? findAvailableSlotForActivity(activity, candidates)
         : activity;
 
       rescheduled.push(nextActivity);
@@ -849,6 +853,17 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     }
 
     return rescheduled;
+  }
+
+  function conflictCandidatesForActivity(
+    activity: NewPlannedActivity,
+    candidates: PlannedActivity[],
+  ): PlannedActivity[] {
+    if (activity.participant === "both") {
+      return candidates;
+    }
+
+    return candidates.filter((candidate) => !candidate.id.startsWith("calendar-busy-"));
   }
 
   function hasRescheduledActivities(original: NewPlannedActivity[], updated: NewPlannedActivity[]): boolean {
@@ -2524,7 +2539,8 @@ async function checkPlanConflicts(
     startsAt: window.startsAt,
     endsAt: window.endsAt,
   });
-  const externalCandidates = externalBusySlots
+  const externalCandidates = activity.participant === "both"
+    ? externalBusySlots
     .filter(
       (slot) =>
         !localCandidates.some((candidate) => timeRangesOverlap(slot, candidate)) &&
@@ -2533,7 +2549,8 @@ async function checkPlanConflicts(
             (candidate) => candidate.id === ignoredActivityId && timeRangesOverlap(slot, candidate),
           )),
     )
-    .map((slot) => toExternalBusyActivity(slot, activity.timezone));
+    .map((slot) => toExternalBusyActivity(slot, activity.timezone))
+    : [];
 
   return findConflicts(activity, [...filteredLocalCandidates, ...externalCandidates]);
 }
