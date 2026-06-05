@@ -1,6 +1,8 @@
 import { DateTime } from "luxon";
 
+import type { Participant } from "./planned-activity.js";
 import type { TaskBasket, TaskPriority, WorkTask } from "./task.js";
+import type { TimeEntry } from "./time-entry.js";
 
 export function formatTaskSaved(task: WorkTask): string {
   return [
@@ -54,18 +56,33 @@ export function formatTaskList(title: string, tasks: WorkTask[]): string {
   ].join("\n");
 }
 
-export function formatWorkDashboard(tasks: WorkTask[], projectNames: string[] = []): string {
+export type WorkDashboardFormatOptions = {
+  activeTimers?: TimeEntry[];
+  participant?: Participant;
+  timezone?: string;
+};
+
+export function formatWorkDashboard(
+  tasks: WorkTask[],
+  projectNames: string[] = [],
+  options: WorkDashboardFormatOptions = {},
+): string {
   const activeTasks = tasks.filter((task) => task.status !== "closed");
   const projects = groupTasksByProject(activeTasks, projectNames);
   const totalCounts = countPriorities(activeTasks);
   const blockedCount = activeTasks.filter((task) => task.status === "blocked").length;
   const dueTodayCount = activeTasks.filter((task) => isDueToday(task.deadline)).length;
+  const activeTimers = options.activeTimers ?? [];
   const lines = [
-    "Робочий dashboard",
+    `Робочий dashboard${formatDashboardOwner(options.participant)}`,
     "",
-    `P1: ${totalCounts.P1} · P2: ${totalCounts.P2} · P3: ${totalCounts.P3} · P4: ${totalCounts.P4}`,
-    `Дедлайни сьогодні: ${dueTodayCount}`,
-    `Заблоковано: ${blockedCount}`,
+    activeTimers.length === 0
+      ? "Активних таймерів немає."
+      : `Активний таймер: ${formatDashboardTimer(activeTimers[0]!, options.timezone)}`,
+    "",
+    `${priorityIcon("P1")} P1 ${totalCounts.P1}   ${priorityIcon("P2")} P2 ${totalCounts.P2}   ${priorityIcon("P3")} P3 ${totalCounts.P3}   ${priorityIcon("P4")} P4 ${totalCounts.P4}`,
+    `⏰ Дедлайни сьогодні: ${dueTodayCount}`,
+    `⚠️ Заблоковано: ${blockedCount}`,
     "",
     "Проекти:",
   ];
@@ -80,11 +97,13 @@ export function formatWorkDashboard(tasks: WorkTask[], projectNames: string[] = 
     const blockedTasks = projectTasks.filter((task) => task.status === "blocked");
     const counts = countPriorities(projectTasks);
     const dueSoon = projectTasks.filter((task) => isDueWithin(task.deadline, 24)).length;
+    const nearestDeadline = getNearestDeadline(projectTasks);
+    const activeProjectTimer = activeTimers.find((timer) => projectTasks.some((task) => task.id === timer.taskId));
 
     lines.push(
       `${index + 1}. ${project}`,
-      `Відкрито: ${openTasks.length} · заблоковано: ${blockedTasks.length} · дедлайн 24г: ${dueSoon}`,
-      `P1: ${counts.P1} · P2: ${counts.P2} · P3: ${counts.P3} · P4: ${counts.P4}`,
+      `${priorityIcon("P1")}${counts.P1} ${priorityIcon("P2")}${counts.P2} ${priorityIcon("P3")}${counts.P3} ${priorityIcon("P4")}${counts.P4} · ⏰ 24г: ${dueSoon} · ⚠️ ${blockedTasks.length}${nearestDeadline ? ` · найближчий: ${nearestDeadline}` : ""}${activeProjectTimer ? " · 1 active" : ""}`,
+      `Відкрито: ${openTasks.length}`,
       "",
     );
   });
@@ -94,16 +113,36 @@ export function formatWorkDashboard(tasks: WorkTask[], projectNames: string[] = 
 
 export function formatProjectTaskList(project: string, tasks: WorkTask[]): string {
   const sorted = sortTasksForWork(tasks.filter((task) => task.status !== "closed"));
+  const counts = countPriorities(sorted);
+  const blockedTasks = sorted.filter((task) => task.status === "blocked");
+  const nextTasks = sorted.filter((task) => task.status === "open").slice(0, 5);
+  const nearestDeadline = getNearestDeadline(sorted);
 
-  if (sorted.length === 0) {
-    return `Проект: ${project}\n\nВідкритих задач немає.`;
+  const lines = [
+    project,
+    "",
+    `${priorityIcon("P1")} P1: ${counts.P1} · ${priorityIcon("P2")} P2: ${counts.P2} · ${priorityIcon("P3")} P3: ${counts.P3} · ${priorityIcon("P4")} P4: ${counts.P4}`,
+    `⏰ Найближчий дедлайн: ${nearestDeadline ?? "немає"}`,
+    `⚠️ Заблоковано: ${blockedTasks.length}`,
+    "",
+    "Наступні задачі:",
+  ];
+
+  if (nextTasks.length === 0) {
+    lines.push("Відкритих задач немає.");
+  } else {
+    lines.push(...nextTasks.map((task, index) => `${index + 1}. ${formatTaskLine(task)}`));
   }
 
-  return [
-    `Проект: ${project}`,
-    "",
-    ...sorted.map((task, index) => `${index + 1}. ${formatTaskLine(task)}`),
-  ].join("\n");
+  lines.push("", "Заблоковані:");
+
+  if (blockedTasks.length === 0) {
+    lines.push("Заблокованих задач немає.");
+  } else {
+    lines.push(...blockedTasks.map((task) => `- ${formatTaskLine(task)}`));
+  }
+
+  return lines.join("\n");
 }
 
 export function formatNextTask(task: WorkTask | undefined, project?: string): string {
@@ -192,6 +231,58 @@ function countPriorities(tasks: WorkTask[]): Record<TaskPriority, number> {
     P3: tasks.filter((task) => task.priority === "P3").length,
     P4: tasks.filter((task) => task.priority === "P4" || !task.priority).length,
   };
+}
+
+function priorityIcon(priority: TaskPriority): string {
+  return {
+    P1: "🔴",
+    P2: "🟠",
+    P3: "🟡",
+    P4: "⚪",
+  }[priority];
+}
+
+function formatDashboardOwner(participant: Participant | undefined): string {
+  if (!participant) {
+    return "";
+  }
+
+  const labels: Record<Participant, string> = {
+    vania: " Вані",
+    nastia: " Насті",
+    both: " разом",
+  };
+
+  return labels[participant];
+}
+
+function formatDashboardTimer(entry: TimeEntry, timezone = "Europe/Kiev"): string {
+  const durationMinutes = Math.max(0, Math.round((Date.now() - Date.parse(entry.startedAt)) / 60000));
+  const projectPart = entry.title;
+  const basketPart = formatBasketLabel(entry.basket);
+  const startedAt = DateTime.fromISO(entry.startedAt).setZone(timezone).toFormat("HH:mm");
+
+  return `${basketPart} · ${projectPart} · ${formatDuration(durationMinutes)} · з ${startedAt}`;
+}
+
+function getNearestDeadline(tasks: WorkTask[]): string | undefined {
+  const deadline = tasks
+    .map((task) => task.deadline)
+    .filter((item): item is string => Boolean(item))
+    .sort((left, right) => Date.parse(left) - Date.parse(right))[0];
+
+  return deadline ? formatDeadline(deadline) : undefined;
+}
+
+function formatDuration(minutes: number): string {
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+
+  if (hours === 0) {
+    return `${remainder} хв`;
+  }
+
+  return remainder === 0 ? `${hours} год` : `${hours} год ${remainder} хв`;
 }
 
 function priorityRank(priority: TaskPriority | undefined): number {

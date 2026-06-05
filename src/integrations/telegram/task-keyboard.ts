@@ -41,25 +41,30 @@ export function buildWorkDashboardKeyboard(projects: string[]): InlineKeyboard |
   return keyboard;
 }
 
-export function buildProjectKeyboard(tasks: WorkTask[]): InlineKeyboard | undefined {
+export function buildProjectKeyboard(tasks: WorkTask[], projectIndex?: number): InlineKeyboard {
   const activeTasks = tasks.filter((task) => task.status !== "closed");
-
-  if (activeTasks.length === 0) {
-    return undefined;
-  }
-
   const keyboard = new InlineKeyboard();
 
-  activeTasks.forEach((task, index) => {
+  activeTasks.slice(0, 5).forEach((task, index) => {
     const number = index + 1;
 
     if (task.status === "open") {
-      keyboard.text(`Старт ${number}`, `task:track:${task.id}`).text(`Done ${number}`, `task:close:${task.id}`).row();
-      keyboard.text(`Block ${number}`, `task:block:${task.id}`).row();
+      keyboard.text(`▶️ Старт #${number}`, `task:track:${task.id}`).text(`✅ Готово #${number}`, `task:close:${task.id}`).row();
+      keyboard.text(`⚠️ Блок #${number}`, `task:block:${task.id}`).row();
     } else {
-      keyboard.text(`Unblock ${number}`, `task:unblock:${task.id}`).row();
+      keyboard.text(`↩️ Розблокувати #${number}`, `task:unblock:${task.id}`).row();
     }
   });
+
+  if (projectIndex !== undefined) {
+    keyboard
+      .text("➕ Додати задачу", `work:project-add:${projectIndex}`)
+      .text("📋 Показати всі", `work:project-all:${projectIndex}`)
+      .row()
+      .text("⚠️ Заблоковані", `work:project-blocked:${projectIndex}`)
+      .text("⬅️ Назад", "work:dashboard")
+      .row();
+  }
 
   return keyboard;
 }

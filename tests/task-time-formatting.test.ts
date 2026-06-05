@@ -29,7 +29,7 @@ describe("task formatting", () => {
     ];
 
     expect(formatWorkDashboard(tasks)).toContain("Хмельпиво");
-    expect(formatWorkDashboard(tasks)).toContain("P1: 2");
+    expect(formatWorkDashboard(tasks)).toContain("🔴 P1 2");
     expect(formatProjectTaskList("Хмельпиво", tasks)).toContain("дедлайн 2026-06-06");
     expect(sortTasksForWork(tasks)[0]?.title).toBe("P1 soon");
     expect(formatNextTask(sortTasksForWork(tasks)[0], "Хмельпиво")).toContain("P1 soon");
@@ -40,15 +40,26 @@ describe("task formatting", () => {
 
     expect(dashboard).toContain("Хмельпиво");
     expect(dashboard).toContain("Відкрито: 0");
+    expect(dashboard).toContain("Активних таймерів немає.");
   });
 
   it("formats an empty dashboard instead of an empty task list", () => {
-    const dashboard = formatWorkDashboard([]);
+    const dashboard = formatWorkDashboard([], [], { participant: "nastia" });
 
-    expect(dashboard).toContain("P1: 0");
-    expect(dashboard).toContain("Дедлайни сьогодні: 0");
+    expect(dashboard).toContain("Робочий dashboard Насті");
+    expect(dashboard).toContain("🔴 P1 0");
+    expect(dashboard).toContain("⏰ Дедлайни сьогодні: 0");
     expect(dashboard).toContain("Проекти:");
     expect(dashboard).toContain("Поки немає проектів.");
+  });
+
+  it("formats a project screen even when the project is empty", () => {
+    const project = formatProjectTaskList("Хмельпиво", []);
+
+    expect(project).toContain("Хмельпиво");
+    expect(project).toContain("🔴 P1: 0");
+    expect(project).toContain("Відкритих задач немає.");
+    expect(project).toContain("Заблокованих задач немає.");
   });
 });
 

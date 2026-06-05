@@ -22,6 +22,7 @@ import {
   sortTasksForWork,
 } from "../../domain/task-formatting.js";
 import { formatActiveTimeEntry, formatTimeStarted } from "../../domain/time-entry-formatting.js";
+import type { Participant } from "../../domain/planned-activity.js";
 import type { WorkTaskRepository } from "../../domain/task.js";
 import type { WorkProjectRepository } from "../../domain/work-project.js";
 import type { AppConfig } from "../../config/config.js";
@@ -77,18 +78,7 @@ export function createTaskCommands(deps: TaskCommandDeps): void {
   });
 
   bot.command("work_dashboard", async (ctx) => {
-    const tasks = await workTasks.list();
-    const storedProjects = await workProjects.list({ status: "active" });
-    const projects = getProjectNames(tasks, storedProjects.map((project) => project.name));
-    const chatId = ctx.chat?.id;
-
-    if (chatId) {
-      dashboardProjectsByChat.set(chatId, projects);
-    }
-
-    const keyboard = buildWorkDashboardKeyboard(projects);
-
-    await ctx.reply(formatWorkDashboard(tasks, storedProjects.map((project) => project.name)), keyboard ? { reply_markup: keyboard } : undefined);
+    await replyWithWorkDashboard(ctx);
   });
 
   bot.command("projects", async (ctx) => {
@@ -327,14 +317,99 @@ export function createTaskCommands(deps: TaskCommandDeps): void {
     }
 
     await ctx.answerCallbackQuery(project);
-    await replyWithProject(ctx, project);
+    await replyWithProject(ctx, project, Number(ctx.match[1]));
   });
 
-  async function replyWithProject(ctx: Context, project: string): Promise<void> {
-    const tasks = sortTasksForWork(await workTasks.list({ project }));
-    const keyboard = buildProjectKeyboard(tasks);
+  bot.callbackQuery("work:dashboard", async (ctx) => {
+    await ctx.answerCallbackQuery("Dashboard");
+    await replyWithWorkDashboard(ctx);
+  });
 
-    await ctx.reply(formatProjectTaskList(project, tasks), keyboard ? { reply_markup: keyboard } : undefined);
+  bot.callbackQuery(/^work:project-add:(\d+)$/, async (ctx) => {
+    const project = getDashboardProject(ctx, Number(ctx.match[1]));
+
+    if (!project) {
+      await ctx.answerCallbackQuery("Онови /work_dashboard і спробуй ще раз.");
+      return;
+    }
+
+    await ctx.answerCallbackQuery("Приклад додавання задачі");
+    await ctx.reply(
+      [
+        `Додати задачу в ${project}:`,
+        "",
+        `/task_add Назва | операційка | Настя | ${project} | P2 | 2026-06-06`,
+        "",
+        "Або голосом: “додай задачу ... у цей проект з пріоритетом P2”.",
+      ].join("\n"),
+    );
+  });
+
+  bot.callbackQuery(/^work:project-all:(\d+)$/, async (ctx) => {
+    const project = getDashboardProject(ctx, Number(ctx.match[1]));
+
+    if (!project) {
+      await ctx.answerCallbackQuery("Онови /work_dashboard і спробуй ще раз.");
+      return;
+    }
+
+    const tasks = sortTasksForWork(await workTasks.list({ project }));
+
+    await ctx.answerCallbackQuery("Усі задачі");
+    await ctx.reply(formatTaskList(`Усі задачі: ${project}`, tasks));
+  });
+
+  bot.callbackQuery(/^work:project-blocked:(\d+)$/, async (ctx) => {
+    const project = getDashboardProject(ctx, Number(ctx.match[1]));
+
+    if (!project) {
+      await ctx.answerCallbackQuery("Онови /work_dashboard і спробуй ще раз.");
+      return;
+    }
+
+    const tasks = sortTasksForWork(await workTasks.list({ project, status: "blocked" }));
+
+    await ctx.answerCallbackQuery("Заблоковані");
+    await ctx.reply(formatTaskList(`Заблоковані задачі: ${project}`, tasks));
+  });
+
+  async function replyWithWorkDashboard(ctx: Context): Promise<void> {
+    const tasks = await workTasks.list();
+    const storedProjects = await workProjects.list({ status: "active" });
+    const projectNames = storedProjects.map((project) => project.name);
+    const projects = getProjectNames(tasks, projectNames);
+    const chatId = ctx.chat?.id;
+    const participant = getCurrentParticipant(ctx, config);
+    const activeTimer = await timeEntries.getActive(participant ? { participant } : undefined);
+
+    if (chatId) {
+      dashboardProjectsByChat.set(chatId, projects);
+    }
+
+    const keyboard = buildWorkDashboardKeyboard(projects);
+
+    await ctx.reply(
+      formatWorkDashboard(tasks, projectNames, {
+        activeTimers: activeTimer ? [activeTimer] : [],
+        participant,
+        timezone: config.timezone,
+      }),
+      keyboard ? { reply_markup: keyboard } : undefined,
+    );
+  }
+
+  async function replyWithProject(ctx: Context, project: string, projectIndex?: number): Promise<void> {
+    const tasks = sortTasksForWork(await workTasks.list({ project }));
+    const keyboard = buildProjectKeyboard(tasks, projectIndex);
+
+    await ctx.reply(formatProjectTaskList(project, tasks), { reply_markup: keyboard });
+  }
+
+  function getDashboardProject(ctx: Context, index: number): string | undefined {
+    const chatId = ctx.chat?.id;
+    const projects = chatId ? dashboardProjectsByChat.get(chatId) : undefined;
+
+    return projects?.[index];
   }
 }
 
@@ -347,4 +422,14 @@ function getCommandInput(ctx: Context): string {
 
 function splitPipeInput(input: string): string[] {
   return input.split("|").map((part) => part.trim()).filter(Boolean);
+}
+
+function getCurrentParticipant(ctx: Context, config: AppConfig): Participant | undefined {
+  const telegramUserId = ctx.from?.id;
+
+  if (!telegramUserId) {
+    return undefined;
+  }
+
+  return config.users.find((user) => user.telegramUserId === telegramUserId)?.key;
 }
