@@ -33,18 +33,6 @@ export function createApp(config: AppConfig): App {
   const assistantAgent = createAssistantAgentGateway(config);
   const planningTextParser = createPlanningTextParserGateway(config);
 
-  createPlanningCommands({
-    bot,
-    assistantAgent,
-    calendar,
-    config,
-    logger,
-    plannedActivities,
-    planningTextParser,
-    timeEntries,
-    voiceTranscription,
-    workTasks,
-  });
   createTaskCommands({
     bot,
     config,
@@ -64,6 +52,18 @@ export function createApp(config: AppConfig): App {
     analyticsInsights,
     plannedActivities,
     timeEntries,
+    workTasks,
+  });
+  createPlanningCommands({
+    bot,
+    assistantAgent,
+    calendar,
+    config,
+    logger,
+    plannedActivities,
+    planningTextParser,
+    timeEntries,
+    voiceTranscription,
     workTasks,
   });
 

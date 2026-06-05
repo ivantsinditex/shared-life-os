@@ -30,7 +30,7 @@ import {
   renderCalendarTitle,
   toGoogleVisibility,
 } from "../../domain/privacy-rendering.js";
-import type { CalendarBusySlot, CalendarGateway } from "../calendar/google-calendar-gateway.js";
+import type { CalendarBusySlot, CalendarEvent, CalendarGateway } from "../calendar/google-calendar-gateway.js";
 import type {
   AssistantAgentAction,
   AssistantConversationTurn,
@@ -1363,16 +1363,20 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
 
   bot.command("today", async (ctx) => {
     const now = DateTime.now().setZone(config.timezone);
-    const activities = await plannedActivities.listBetween({
+    const range = {
       startsAt: toIso(now.startOf("day")),
       endsAt: toIso(now.endOf("day")),
+    };
+    const activities = await plannedActivities.listBetween({
+      startsAt: range.startsAt,
+      endsAt: range.endsAt,
     });
     const activeTimer = await timeEntries.getActive();
     const openTasks = await workTasks.list({ status: "open" });
 
     rememberActivities(ctx, activities);
     await ctx.reply(["Пульт дня", "", formatActiveTimeEntry(activeTimer, config.timezone)].join("\n"));
-    await replyWithActivitySummary(ctx, "Сьогодні", activities, config.timezone);
+    await replyWithActivityOrCalendarSummary(ctx, "Сьогодні", activities, range);
     await ctx.reply(formatTaskList("Відкриті задачі", openTasks), {
       reply_markup: buildTaskListKeyboard(openTasks),
     });
@@ -1380,13 +1384,17 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
 
   bot.command("week", async (ctx) => {
     const now = DateTime.now().setZone(config.timezone);
-    const activities = await plannedActivities.listBetween({
+    const range = {
       startsAt: toIso(now.startOf("week")),
       endsAt: toIso(now.endOf("week")),
+    };
+    const activities = await plannedActivities.listBetween({
+      startsAt: range.startsAt,
+      endsAt: range.endsAt,
     });
 
     rememberActivities(ctx, activities);
-    await replyWithActivitySummary(ctx, "Цей тиждень", activities, config.timezone);
+    await replyWithActivityOrCalendarSummary(ctx, "Цей тиждень", activities, range);
   });
 
   bot.on("message:text", async (ctx, next) => {
@@ -1413,6 +1421,27 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
         .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt))
         .slice(0, 12),
     );
+  }
+
+  async function replyWithActivityOrCalendarSummary(
+    ctx: Context,
+    title: string,
+    activities: PlannedActivity[],
+    range: { startsAt: string; endsAt: string },
+  ): Promise<void> {
+    if (activities.length > 0) {
+      await replyWithActivitySummary(ctx, title, activities, config.timezone);
+      return;
+    }
+
+    const calendarEvents = await calendar.listEvents(range);
+
+    if (calendarEvents.length === 0) {
+      await replyWithActivitySummary(ctx, title, activities, config.timezone);
+      return;
+    }
+
+    await ctx.reply(formatCalendarEventSummary(`${title} з Google Calendar`, calendarEvents, config.timezone));
   }
 
   function rememberTasks(ctx: Context, tasks: WorkTask[]): void {
@@ -2880,6 +2909,27 @@ function formatActivitySummary(
       `синхронізація: ${formatSyncStatus(activity.syncStatus)}`,
       "|",
       `id: ${shortId(activity.id)}`,
+    ].join(" ");
+  });
+
+  return [title, "", ...lines].join("\n");
+}
+
+function formatCalendarEventSummary(
+  title: string,
+  events: CalendarEvent[],
+  timezone: string,
+): string {
+  const lines = events.map((event) => {
+    const start = DateTime.fromISO(event.startsAt).setZone(timezone);
+    const end = DateTime.fromISO(event.endsAt).setZone(timezone);
+
+    return [
+      start.setLocale("uk").toFormat("ccc HH:mm"),
+      "-",
+      end.toFormat("HH:mm"),
+      "|",
+      event.title,
     ].join(" ");
   });
 

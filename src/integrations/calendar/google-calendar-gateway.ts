@@ -24,11 +24,19 @@ export type CalendarBusySlot = {
   endsAt: string;
 };
 
+export type CalendarEvent = {
+  id: string;
+  title: string;
+  startsAt: string;
+  endsAt: string;
+};
+
 export interface CalendarGateway {
   createEvent(draft: CalendarEventDraft): Promise<CalendarEventLink>;
   updateEvent(eventId: string, draft: CalendarEventDraft): Promise<CalendarEventLink>;
   deleteEvent(eventId: string): Promise<void>;
   listBusySlots(params: { startsAt: string; endsAt: string }): Promise<CalendarBusySlot[]>;
+  listEvents(params: { startsAt: string; endsAt: string }): Promise<CalendarEvent[]>;
 }
 
 export function createCalendarGateway(config: AppConfig): CalendarGateway {
@@ -121,6 +129,26 @@ export class GoogleCalendarGateway implements CalendarGateway {
         endsAt: slot.end as string,
       }));
   }
+
+  async listEvents(params: { startsAt: string; endsAt: string }): Promise<CalendarEvent[]> {
+    const response = await this.calendar.events.list({
+      auth: this.auth,
+      calendarId: this.config.googleCalendarId,
+      timeMin: params.startsAt,
+      timeMax: params.endsAt,
+      singleEvents: true,
+      orderBy: "startTime",
+    });
+
+    return (response.data.items ?? [])
+      .filter((event) => event.id && event.start?.dateTime && event.end?.dateTime)
+      .map((event) => ({
+        id: event.id as string,
+        title: event.summary ?? "Подія календаря",
+        startsAt: event.start?.dateTime as string,
+        endsAt: event.end?.dateTime as string,
+      }));
+  }
 }
 
 export class DisabledCalendarGateway implements CalendarGateway {
@@ -137,6 +165,10 @@ export class DisabledCalendarGateway implements CalendarGateway {
   }
 
   async listBusySlots(): Promise<CalendarBusySlot[]> {
+    return [];
+  }
+
+  async listEvents(): Promise<CalendarEvent[]> {
     return [];
   }
 }
