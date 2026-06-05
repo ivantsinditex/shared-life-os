@@ -792,7 +792,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
       }));
       const candidates = conflictCandidatesForActivity(activity, [...existingCandidates, ...previousBatchActivities]);
       const hasConflict = candidates.some((candidate) =>
-        activitiesConflict(activity, candidate),
+        activitiesConflict(activity, candidate) && !isNestedWorkBatchActivity(activity, candidate),
       );
 
       if (hasConflict) {
@@ -843,7 +843,9 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
 
     for (const activity of activities) {
       const candidates = conflictCandidatesForActivity(activity, [...existingCandidates, ...scheduled]);
-      const conflicts = candidates.some((candidate) => activitiesConflict(activity, candidate));
+      const conflicts = candidates.some(
+        (candidate) => activitiesConflict(activity, candidate) && !isNestedWorkBatchActivity(activity, candidate),
+      );
       const nextActivity = conflicts
         ? findAvailableSlotForActivity(activity, candidates)
         : activity;
@@ -864,6 +866,21 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     }
 
     return candidates.filter((candidate) => !candidate.id.startsWith("calendar-busy-"));
+  }
+
+  function isNestedWorkBatchActivity(activity: NewPlannedActivity, candidate: PlannedActivity): boolean {
+    if (!candidate.id.startsWith("pending-batch-")) {
+      return false;
+    }
+
+    if (activity.participant !== candidate.participant || activity.category !== "work" || candidate.category !== "work") {
+      return false;
+    }
+
+    return (
+      timeContains(candidate, activity) ||
+      timeContains(activity, candidate)
+    );
   }
 
   function hasRescheduledActivities(original: NewPlannedActivity[], updated: NewPlannedActivity[]): boolean {
@@ -2756,6 +2773,14 @@ function timeRangesOverlap(
 ): boolean {
   return Date.parse(left.startsAt) < Date.parse(right.endsAt)
     && Date.parse(left.endsAt) > Date.parse(right.startsAt);
+}
+
+function timeContains(
+  outer: Pick<CalendarBusySlot, "startsAt" | "endsAt">,
+  inner: Pick<PlannedActivity, "startsAt" | "endsAt">,
+): boolean {
+  return Date.parse(outer.startsAt) <= Date.parse(inner.startsAt)
+    && Date.parse(outer.endsAt) >= Date.parse(inner.endsAt);
 }
 
 function toIso(dateTime: DateTime): string {
