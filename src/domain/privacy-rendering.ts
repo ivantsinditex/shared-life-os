@@ -1,15 +1,19 @@
-import type { PlannedActivity, PrivacyLevel } from "./planned-activity.js";
+import type { ActivityCategory, Participant, PlannedActivity, PrivacyLevel } from "./planned-activity.js";
 
-export function renderCalendarTitle(activity: Pick<PlannedActivity, "title" | "participant" | "privacy">): string {
+export function renderCalendarTitle(
+  activity: Pick<PlannedActivity, "title" | "participant" | "category" | "privacy">,
+): string {
+  const participantLabel = formatParticipantShort(activity.participant);
+
   if (activity.privacy !== "private") {
-    return activity.title;
+    return `${participantLabel} · ${formatActivityIcon(activity)} ${activity.title}`;
   }
 
   if (activity.participant === "both") {
-    return "Зайнято";
+    return "Разом · зайнято";
   }
 
-  return activity.participant === "nastia" ? "Настя зайнята" : "Ваня зайнятий";
+  return activity.participant === "nastia" ? "Настя · зайнята" : "Ваня · зайнятий";
 }
 
 export function toGoogleVisibility(privacy: PrivacyLevel): "default" | "private" {
@@ -54,13 +58,17 @@ export function renderCalendarDescription(activity: PlannedActivity): string {
 }
 
 function formatParticipant(participant: PlannedActivity["participant"]): string {
-  const labels: Record<PlannedActivity["participant"], string> = {
+  const labels: Record<Participant, string> = {
     vania: "Ваня",
     nastia: "Настя",
     both: "Разом",
   };
 
   return labels[participant];
+}
+
+function formatParticipantShort(participant: Participant): string {
+  return formatParticipant(participant);
 }
 
 function formatCategory(category: PlannedActivity["category"]): string {
@@ -87,4 +95,70 @@ function formatPrivacy(privacy: PlannedActivity["privacy"]): string {
   };
 
   return labels[privacy];
+}
+
+function formatActivityIcon(activity: Pick<PlannedActivity, "title" | "participant" | "category">): string {
+  const title = normalizeText(activity.title);
+
+  if (activity.participant === "both" && includesAny(title, ["прогулян", "гуляти", "walk", "пасиб"])) {
+    return "🚶‍♂️🚶‍♀️";
+  }
+
+  if (includesAny(title, ["йога", "yoga"])) {
+    return "🧘";
+  }
+
+  if (includesAny(title, ["воркаут", "workout", "спортзал", "зал", "тренуван", "аджиліті", "agility"])) {
+    return "🏋️";
+  }
+
+  if (includesAny(title, ["прогулян", "гуляти", "walk", "пасиб"])) {
+    return "🚶";
+  }
+
+  if (includesAny(title, ["драйв", "федр", "собак", "пес", "dog"])) {
+    return "🐕";
+  }
+
+  if (includesAny(title, ["подарунок", "кінь", "конюш", "horse"])) {
+    return "🐴";
+  }
+
+  if (includesAny(title, ["читан", "reading", "книга"])) {
+    return "📚";
+  }
+
+  if (includesAny(title, ["навчан", "learning", "француз", "матем", "курс"])) {
+    return "🎓";
+  }
+
+  if (includesAny(title, ["догляд", "care"])) {
+    return "🧴";
+  }
+
+  if (includesAny(title, ["побач", "разом", "вечер", "date"])) {
+    return "❤️";
+  }
+
+  const categoryIcons: Record<ActivityCategory, string> = {
+    sport: "🏋️",
+    work: "💼",
+    learning: "🎓",
+    reading: "📚",
+    dogs: "🐕",
+    horse: "🐴",
+    care: "🧴",
+    together: "❤️",
+    other: "📌",
+  };
+
+  return categoryIcons[activity.category];
+}
+
+function normalizeText(value: string): string {
+  return value.toLocaleLowerCase("uk-UA");
+}
+
+function includesAny(value: string, fragments: string[]): boolean {
+  return fragments.some((fragment) => value.includes(fragment));
 }

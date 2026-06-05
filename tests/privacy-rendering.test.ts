@@ -14,9 +14,10 @@ describe("privacy rendering", () => {
       renderCalendarTitle({
         title: "Nastia care",
         participant: "nastia",
+        category: "care",
         privacy: "busy_only",
       }),
-    ).toBe("Nastia care");
+    ).toBe("Настя · 🧴 Nastia care");
   });
 
   it("hides private details", () => {
@@ -24,9 +25,10 @@ describe("privacy rendering", () => {
       renderCalendarTitle({
         title: "Nastia care",
         participant: "nastia",
+        category: "care",
         privacy: "private",
       }),
-    ).toBe("Настя зайнята");
+    ).toBe("Настя · зайнята");
   });
 
   it("keeps shared details visible", () => {
@@ -34,9 +36,39 @@ describe("privacy rendering", () => {
       renderCalendarTitle({
         title: "Together dinner",
         participant: "both",
+        category: "together",
         privacy: "shared_details",
       }),
-    ).toBe("Together dinner");
+    ).toBe("Разом · ❤️ Together dinner");
+  });
+
+  it("adds participant labels and contextual icons to visible titles", () => {
+    expect(
+      renderCalendarTitle({
+        title: "Воркаут",
+        participant: "vania",
+        category: "sport",
+        privacy: "shared_details",
+      }),
+    ).toBe("Ваня · 🏋️ Воркаут");
+
+    expect(
+      renderCalendarTitle({
+        title: "Прогулянка з драйвом",
+        participant: "vania",
+        category: "dogs",
+        privacy: "shared_details",
+      }),
+    ).toBe("Ваня · 🚶 Прогулянка з драйвом");
+
+    expect(
+      renderCalendarTitle({
+        title: "Прогулянка",
+        participant: "both",
+        category: "together",
+        privacy: "shared_details",
+      }),
+    ).toBe("Разом · 🚶‍♂️🚶‍♀️ Прогулянка");
   });
 
   it("maps sensitive events to private Google visibility", () => {
