@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { DateTime } from "luxon";
 
 import type { AppConfig } from "../../config/config.js";
 import type { PlannedActivity } from "../../domain/planned-activity.js";
@@ -325,9 +326,19 @@ class OpenAiAssistantAgentGateway implements AssistantAgentGateway {
     const outputText = extractOutputText(payload);
     const parsed = agentResponseSchema.parse(JSON.parse(outputText));
 
+    const actions = parsed.actions
+      .map(toAgentAction)
+      .filter((action): action is AssistantAgentAction => Boolean(action));
+
     return {
       reply: parsed.reply,
-      actions: parsed.actions.map(toAgentAction).filter((action): action is AssistantAgentAction => Boolean(action)),
+      actions: normalizeAgentActions({
+        text: input.text,
+        actions,
+        timezone: input.timezone,
+        now: input.now,
+        currentParticipant: input.currentParticipant,
+      }),
     };
   }
 }
@@ -342,10 +353,15 @@ function buildAgentPrompt(timezone: string, now: string, currentParticipant?: Ag
     "If the user asks for current/latest news, live prices, today's events, or other live facts and web_search_enabled is true, use web search and answer with source links/citations when available.",
     "If the user asks for current/latest news, live prices, today's events, or other live facts and web_search_enabled is false, say that live web search is not connected for this request. Do not invent fresh news.",
     "For general recommendations or explanations, keep enough detail to make follow-up questions meaningful, and preserve names/titles so later ordinals can refer to them.",
+    "Family context: the household has seven members: Nastia, Vania, the dogs Drive/Драйв and Fedr/Федр, the cats Barney/Барні and Xiola/Ксіола, and Nastia's horse Gift/Подарунок. These animals are recurring real-life participants in events.",
     "Act like a helpful assistant, but never directly perform destructive actions. For deletes, return draft_delete_recent or draft_delete_many so the app can ask for confirmation.",
+    "Create intent words such as зроби, постав, заплануй, створи, додай, schedule, plan, create, add mean draft_create unless the user clearly says to update/change/move/replace/delete an existing activity.",
+    "Update intent words are онови, зміни, перенеси, заміни, update, change, move, replace. Only use draft_update_recent when the user clearly refers to an existing activity.",
     "If the user asks to create several future activities in one message, return one draft_create action for every activity. Never turn one of the requested activities into a plain answer.",
     "For daily or weekly plan dictation, split the message into all concrete time blocks. A line like '05-08 біг' means a draft_create with start 05:00 and duration 180 minutes.",
     "For weekday labels in Ukrainian/Russian/English (ПН/понеділок/Monday, ВТ, СР, ЧТ, ПТ, СБ, НД), map them to the requested week. 'цей тиждень/на тиждень' means the current local week; 'наступний тиждень' means the next local week. If the week is truly ambiguous, ask a clarification.",
+    "For new create requests with a weekday but without an explicit week, choose the nearest future occurrence of that weekday. Example: if today is Friday and the user says 'на понеділок', use the next Monday, not today and not the previous Monday.",
+    "If the user gives both weekday and date, such as 'понеділок 8 червня', trust the explicit date and keep the weekday only as context.",
     "For flexible scheduling phrases like random hours/рандомні години/сам розберись/будь-які години, choose reasonable non-overlapping local times yourself using recent_activities as constraints. Prefer daytime slots 09:00-20:00 unless the user gave a specific time window.",
     "If the user requests daily work/reading/learning blocks without exact hours, create one draft_create per day and choose available-looking times. Do not ask for exact hours just because the user allowed random hours.",
     "If the user asks to find free slots, avoid booked slots, or choose the time yourself, do not return ask_clarification for missing start time. Pick concrete local start times.",
@@ -368,8 +384,11 @@ function buildAgentPrompt(timezone: string, now: string, currentParticipant?: Ag
       ? `Current Telegram user participant is ${currentParticipant}. Pronouns like me/my/мені/мене/мій/моя/почав/почала should map to ${currentParticipant}.`
       : "Current Telegram user participant is unknown. If user says me/my/мені/мене without a name, ask a clarification.",
     "Explicit participants: Ivan/Vania/Vanya/Ваня/Іван -> vania; Настя/Nastia -> nastia; together/us/разом/нам -> both.",
+    "If the current user says to create/schedule/put an event 'з Ванею' or 'з Настею', it is a couple/shared event: participant both and category together.",
+    "If the current user mentions an animal without the other human partner, keep participant as the current user. Drive/Драйв and Fedr/Федр are dogs -> category dogs. Gift/Подарунок is Nastia's horse -> participant nastia and category horse unless another human participant is explicit. Barney/Барні and Xiola/Ксіола are cats -> category other unless care is explicit, then category care.",
     "Categories: yoga/workout/gym/run/йога/воркаут/зал/пробіжка -> sport.",
-    "Categories: конюшня/кінь/верхова їзда/horse/riding -> horse. Dates/побачення/вечір разом/зустріч для пари -> together.",
+    "Categories: пес/собака/драйв/федр/вигул/прогулянка з собакою -> dogs.",
+    "Categories: подарунок/конюшня/кінь/верхова їзда/horse/riding -> horse. Dates/побачення/вечір разом/зустріч для пари -> together.",
     "For 'побачення з Ванею/Настею', create a calendar activity with participant both and category together, because it involves the current user plus the named partner.",
     "Ukrainian time phrase 'на третю годину' usually means 15:00 unless morning/night is explicit. 'на десяту' usually means 10:00.",
     "Default privacy for created activities is busy_only unless user asks private or shared details.",
@@ -395,6 +414,362 @@ function buildAgentPrompt(timezone: string, now: string, currentParticipant?: Ag
     "For time_summary date ranges: today is local 00:00 to tomorrow 00:00; this week is Monday 00:00 to next Monday 00:00.",
     "For task/time replies, prefer Ukrainian wording and avoid explaining the internal action type.",
   ].join("\n");
+}
+
+export function normalizeAgentActions(params: {
+  text: string;
+  actions: AssistantAgentAction[];
+  timezone: string;
+  now: string;
+  currentParticipant?: AgentParticipant;
+}): AssistantAgentAction[] {
+  const createIntent = hasCreateIntent(params.text) && !hasExplicitUpdateOrDeleteIntent(params.text);
+
+  return params.actions.map((action) => {
+    const createAction = createIntent && action.type === "draft_update_recent"
+      ? updateActionToCreateAction(action, params)
+      : action;
+
+    if (createAction.type === "draft_create") {
+      return normalizeDraftCreateAction(createAction, params);
+    }
+
+    return createAction;
+  });
+}
+
+function normalizeDraftCreateAction(
+  action: Extract<AssistantAgentAction, { type: "draft_create" }>,
+  params: {
+    text: string;
+    timezone: string;
+    now: string;
+    currentParticipant?: AgentParticipant;
+  },
+): Extract<AssistantAgentAction, { type: "draft_create" }> {
+  const normalizedFamilyAction = normalizeFamilySemantics(action, params.text, params.currentParticipant);
+  const normalizedStart = normalizeCreateStartFromUserText(
+    normalizedFamilyAction.start,
+    params.text,
+    params.timezone,
+    params.now,
+  );
+
+  return {
+    ...normalizedFamilyAction,
+    start: normalizedStart,
+  };
+}
+
+function updateActionToCreateAction(
+  action: Extract<AssistantAgentAction, { type: "draft_update_recent" }>,
+  params: {
+    text: string;
+    timezone: string;
+    now: string;
+    currentParticipant?: AgentParticipant;
+  },
+): AssistantAgentAction {
+  if (!action.start && !action.title && !action.titleContains) {
+    return action;
+  }
+
+  return normalizeDraftCreateAction(
+    {
+      type: "draft_create",
+      title: action.title ?? action.titleContains ?? "Подія",
+      participant: action.participant ?? inferParticipant(params.text, params.currentParticipant),
+      category: action.category ?? inferCategory(params.text),
+      start: action.start ?? params.now,
+      durationMinutes: action.durationMinutes ?? 60,
+      privacy: action.privacy ?? "busy_only",
+    },
+    params,
+  );
+}
+
+function normalizeCreateStartFromUserText(
+  modelStart: string,
+  text: string,
+  timezone: string,
+  nowText: string,
+): string {
+  const start = parseLocalDateTime(modelStart, timezone);
+  const now = parseLocalDateTime(nowText, timezone);
+
+  if (!start.isValid || !now.isValid) {
+    return modelStart;
+  }
+
+  const explicitDate = detectExplicitDayMonth(text, now, timezone);
+  const targetDate = explicitDate ?? detectNearestFutureWeekday(text, now);
+
+  if (!targetDate) {
+    return modelStart;
+  }
+
+  return targetDate
+    .set({
+      hour: start.hour,
+      minute: start.minute,
+      second: 0,
+      millisecond: 0,
+    })
+    .toFormat("yyyy-MM-dd HH:mm");
+}
+
+function parseLocalDateTime(value: string, timezone: string): DateTime {
+  const local = DateTime.fromFormat(value, "yyyy-MM-dd HH:mm", { zone: timezone });
+
+  if (local.isValid) {
+    return local;
+  }
+
+  return DateTime.fromISO(value, { zone: timezone }).setZone(timezone);
+}
+
+function detectExplicitDayMonth(text: string, now: DateTime, timezone: string): DateTime | undefined {
+  const normalized = normalizeText(text);
+  const match = normalized.match(/(\d{1,2})\s*(січня|января|january|лютого|февраля|february|березня|марта|march|квітня|апреля|april|травня|мая|may|червня|июня|june|липня|июля|july|серпня|августа|august|вересня|сентября|september|жовтня|октября|october|листопада|ноября|november|грудня|декабря|december)/);
+
+  if (!match) {
+    return undefined;
+  }
+
+  const day = Number(match[1]);
+  const month = monthNumber(match[2]);
+
+  if (!month) {
+    return undefined;
+  }
+
+  let date = DateTime.fromObject({ year: now.year, month, day }, { zone: timezone }).startOf("day");
+
+  if (!date.isValid) {
+    return undefined;
+  }
+
+  if (date < now.startOf("day")) {
+    date = date.plus({ years: 1 });
+  }
+
+  return date;
+}
+
+function detectNearestFutureWeekday(text: string, now: DateTime): DateTime | undefined {
+  const targetWeekday = detectWeekday(text);
+
+  if (!targetWeekday) {
+    return undefined;
+  }
+
+  const daysUntilTarget = (targetWeekday - now.weekday + 7) % 7;
+  return now.startOf("day").plus({ days: daysUntilTarget === 0 ? 0 : daysUntilTarget });
+}
+
+function detectWeekday(text: string): number | undefined {
+  const normalized = normalizeText(text);
+  const weekdayPatterns: Array<[number, { words: string[]; tokens: string[] }]> = [
+    [1, { words: ["понеділок", "понедельник", "monday"], tokens: ["пн", "mon"] }],
+    [2, { words: ["вівторок", "вторник", "tuesday"], tokens: ["вт", "tue"] }],
+    [3, { words: ["середа", "среда", "wednesday"], tokens: ["ср", "wed"] }],
+    [4, { words: ["четвер", "четверг", "thursday"], tokens: ["чт", "thu"] }],
+    [5, { words: ["пʼятниця", "п'ятниця", "пятниця", "пятница", "friday"], tokens: ["пт", "fri"] }],
+    [6, { words: ["субота", "суббота", "saturday"], tokens: ["сб", "sat"] }],
+    [7, { words: ["неділя", "воскресенье", "sunday"], tokens: ["нд", "sun"] }],
+  ];
+
+  return weekdayPatterns.find(([, patterns]) =>
+    patterns.words.some((pattern) => normalized.includes(pattern)) ||
+    patterns.tokens.some((pattern) => includesToken(normalized, pattern)),
+  )?.[0];
+}
+
+function monthNumber(month: string): number | undefined {
+  const months: Record<string, number> = {
+    "січня": 1,
+    "января": 1,
+    january: 1,
+    "лютого": 2,
+    "февраля": 2,
+    february: 2,
+    "березня": 3,
+    "марта": 3,
+    march: 3,
+    "квітня": 4,
+    "апреля": 4,
+    april: 4,
+    "травня": 5,
+    "мая": 5,
+    may: 5,
+    "червня": 6,
+    "июня": 6,
+    june: 6,
+    "липня": 7,
+    "июля": 7,
+    july: 7,
+    "серпня": 8,
+    "августа": 8,
+    august: 8,
+    "вересня": 9,
+    "сентября": 9,
+    september: 9,
+    "жовтня": 10,
+    "октября": 10,
+    october: 10,
+    "листопада": 11,
+    "ноября": 11,
+    november: 11,
+    "грудня": 12,
+    "декабря": 12,
+    december: 12,
+  };
+
+  return months[month];
+}
+
+function normalizeFamilySemantics(
+  action: Extract<AssistantAgentAction, { type: "draft_create" }>,
+  text: string,
+  currentParticipant?: AgentParticipant,
+): Extract<AssistantAgentAction, { type: "draft_create" }> {
+  if (mentionsHumanPartner(text, currentParticipant)) {
+    return {
+      ...action,
+      participant: "both",
+      category: "together",
+    };
+  }
+
+  if (mentionsGiftHorse(text)) {
+    return {
+      ...action,
+      participant: "nastia",
+      category: "horse",
+    };
+  }
+
+  if (mentionsDog(text)) {
+    return {
+      ...action,
+      participant: currentParticipant ?? action.participant,
+      category: "dogs",
+    };
+  }
+
+  if (mentionsCat(text)) {
+    return {
+      ...action,
+      participant: action.participant === "both" ? "both" : currentParticipant ?? action.participant,
+      category: mentionsCare(text) ? "care" : action.category,
+    };
+  }
+
+  return action;
+}
+
+function inferParticipant(text: string, currentParticipant?: AgentParticipant): AgentParticipant {
+  if (mentionsHumanPartner(text, currentParticipant)) {
+    return "both";
+  }
+
+  if (mentionsGiftHorse(text)) {
+    return "nastia";
+  }
+
+  const normalized = normalizeText(text);
+
+  if (includesAny(normalized, ["настя", "насті", "nastia"])) {
+    return "nastia";
+  }
+
+  if (includesAny(normalized, ["ваня", "ванею", "іван", "ivan", "vania", "vanya"])) {
+    return "vania";
+  }
+
+  return currentParticipant ?? "both";
+}
+
+function inferCategory(text: string): AgentCategory {
+  const normalized = normalizeText(text);
+
+  if (mentionsHumanPartner(text, undefined) || includesAny(normalized, ["побачення", "вечір разом", "разом"])) {
+    return "together";
+  }
+
+  if (mentionsGiftHorse(text) || includesAny(normalized, ["кінь", "конюшн", "верхова", "horse", "riding"])) {
+    return "horse";
+  }
+
+  if (mentionsDog(text)) {
+    return "dogs";
+  }
+
+  if (includesAny(normalized, ["йога", "воркаут", "зал", "спорт", "пробіж", "run", "gym", "workout", "yoga"])) {
+    return "sport";
+  }
+
+  if (includesAny(normalized, ["робот", "операцій", "зйомк", "клієнт", "таск", "задач", "work"])) {
+    return "work";
+  }
+
+  return "other";
+}
+
+function hasCreateIntent(text: string): boolean {
+  return includesAny(normalizeText(text), ["зроби", "постав", "заплануй", "створи", "додай", "добав", "schedule", "plan", "create", "add"]);
+}
+
+function hasExplicitUpdateOrDeleteIntent(text: string): boolean {
+  return includesAny(normalizeText(text), ["онови", "зміни", "зміні", "перенеси", "замін", "видали", "delete", "remove", "update", "change", "move", "replace"]);
+}
+
+function mentionsHumanPartner(text: string, currentParticipant?: AgentParticipant): boolean {
+  const normalized = normalizeText(text);
+  const mentionsVania = includesAny(normalized, ["з ванею", "з іваном", "with vania", "with ivan", "ваня", "іван", "ivan", "vania", "vanya"]);
+  const mentionsNastia = includesAny(normalized, ["з настею", "with nastia", "настя", "nastia"]);
+
+  if (currentParticipant === "vania") {
+    return mentionsNastia;
+  }
+
+  if (currentParticipant === "nastia") {
+    return mentionsVania;
+  }
+
+  return includesAny(normalized, ["побачення", "разом", "нам", "для нас"]) || (mentionsVania && mentionsNastia);
+}
+
+function mentionsDog(text: string): boolean {
+  return includesAny(normalizeText(text), ["драйв", "федр", "пес", "песи", "собака", "собаки", "dog", "dogs"]);
+}
+
+function mentionsGiftHorse(text: string): boolean {
+  return includesAny(normalizeText(text), ["подарун", "кінь", "конюшн", "horse"]);
+}
+
+function mentionsCat(text: string): boolean {
+  return includesAny(normalizeText(text), ["барні", "ксіола", "кіт", "коти", "cat", "cats"]);
+}
+
+function mentionsCare(text: string): boolean {
+  return includesAny(normalizeText(text), ["догляд", "доглянути", "нагодувати", "корм", "care"]);
+}
+
+function normalizeText(text: string): string {
+  return text.toLowerCase().replace(/ё/g, "е");
+}
+
+function includesAny(text: string, patterns: string[]): boolean {
+  return patterns.some((pattern) => text.includes(pattern));
+}
+
+function includesToken(text: string, token: string): boolean {
+  return new RegExp(`(^|[^\\p{L}\\p{N}])${escapeRegExp(token)}($|[^\\p{L}\\p{N}])`, "u").test(text);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function toRecentActivityContext(activity: PlannedActivity): Record<string, string> {
