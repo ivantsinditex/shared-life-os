@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  formatDeadlineTaskList,
   formatNextTask,
+  formatPriorityTaskList,
   formatProjectTaskList,
   formatTaskList,
   formatTaskSaved,
   formatWorkDashboard,
+  formatWorkProjectList,
   sortTasksForWork,
 } from "../src/domain/task-formatting.js";
 import { formatTimeStarted, formatTimeStopped, formatTimeSummary } from "../src/domain/time-entry-formatting.js";
@@ -46,7 +49,7 @@ describe("task formatting", () => {
   it("formats an empty dashboard instead of an empty task list", () => {
     const dashboard = formatWorkDashboard([], [], { participant: "nastia" });
 
-    expect(dashboard).toContain("Робочий dashboard Насті");
+    expect(dashboard).toContain("Робоча панель Насті");
     expect(dashboard).toContain("🔴 P1 0");
     expect(dashboard).toContain("⏰ Дедлайни сьогодні: 0");
     expect(dashboard).toContain("Проекти:");
@@ -60,6 +63,20 @@ describe("task formatting", () => {
     expect(project).toContain("🔴 P1: 0");
     expect(project).toContain("Відкритих задач немає.");
     expect(project).toContain("Заблокованих задач немає.");
+  });
+
+  it("formats project, deadline, and priority work views in Ukrainian", () => {
+    const tasks = [
+      makeTask({ title: "ТЗ на креативи", priority: "P1", project: "Хмельпиво", deadline: "2026-06-06" }),
+      makeTask({ title: "Операційка", priority: "P2", project: "Хмельпиво" }),
+    ];
+
+    expect(formatWorkProjectList(["Хмельпиво", "Bar"])).toContain("1. Хмельпиво");
+    expect(formatWorkProjectList([])).toContain("Поки немає проектів.");
+    expect(formatDeadlineTaskList("Дедлайни: Хмельпиво", tasks)).toContain("ТЗ на креативи");
+    expect(formatDeadlineTaskList("Дедлайни", [])).toContain("Дедлайнів немає.");
+    expect(formatPriorityTaskList("Пріоритети", tasks)).toContain("🔴 P1: 1");
+    expect(formatPriorityTaskList("Пріоритети", tasks)).toContain("🟠 P2: 1");
   });
 });
 

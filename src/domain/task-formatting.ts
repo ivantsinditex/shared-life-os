@@ -56,6 +56,54 @@ export function formatTaskList(title: string, tasks: WorkTask[]): string {
   ].join("\n");
 }
 
+export function formatWorkProjectList(projects: string[]): string {
+  if (projects.length === 0) {
+    return "Проекти\n\nПоки немає проектів.\n\nСтвори перший: /project_add Хмельпиво";
+  }
+
+  return [
+    "Проекти",
+    "",
+    ...projects.map((project, index) => `${index + 1}. ${project}`),
+  ].join("\n");
+}
+
+export function formatDeadlineTaskList(title: string, tasks: WorkTask[]): string {
+  const deadlineTasks = sortTasksForWork(tasks.filter((task) => task.status !== "closed" && task.deadline));
+
+  if (deadlineTasks.length === 0) {
+    return `${title}\n\nДедлайнів немає.`;
+  }
+
+  return [
+    title,
+    "",
+    ...deadlineTasks.map((task, index) => `${index + 1}. ${formatTaskLine(task)}`),
+  ].join("\n");
+}
+
+export function formatPriorityTaskList(title: string, tasks: WorkTask[]): string {
+  const activeTasks = sortTasksForWork(tasks.filter((task) => task.status !== "closed"));
+
+  if (activeTasks.length === 0) {
+    return `${title}\n\nАктивних задач немає.`;
+  }
+
+  const lines = [title];
+
+  for (const priority of taskPriorityOrder) {
+    const priorityTasks = activeTasks.filter((task) => (task.priority ?? "P4") === priority);
+
+    lines.push("", `${priorityIcon(priority)} ${priority}: ${priorityTasks.length}`);
+
+    if (priorityTasks.length > 0) {
+      lines.push(...priorityTasks.map((task, index) => `${index + 1}. ${formatTaskLine(task)}`));
+    }
+  }
+
+  return lines.join("\n");
+}
+
 export type WorkDashboardFormatOptions = {
   activeTimers?: TimeEntry[];
   participant?: Participant;
@@ -74,7 +122,7 @@ export function formatWorkDashboard(
   const dueTodayCount = activeTasks.filter((task) => isDueToday(task.deadline)).length;
   const activeTimers = options.activeTimers ?? [];
   const lines = [
-    `Робочий dashboard${formatDashboardOwner(options.participant)}`,
+    `Робоча панель${formatDashboardOwner(options.participant)}`,
     "",
     activeTimers.length === 0
       ? "Активних таймерів немає."
@@ -232,6 +280,8 @@ function countPriorities(tasks: WorkTask[]): Record<TaskPriority, number> {
     P4: tasks.filter((task) => task.priority === "P4" || !task.priority).length,
   };
 }
+
+const taskPriorityOrder: TaskPriority[] = ["P1", "P2", "P3", "P4"];
 
 function priorityIcon(priority: TaskPriority): string {
   return {

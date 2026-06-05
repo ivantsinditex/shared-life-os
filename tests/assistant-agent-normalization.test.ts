@@ -201,6 +201,119 @@ describe("normalizeAgentActions", () => {
     });
   });
 
+  it("routes natural work dashboard requests to the work dashboard action", () => {
+    const [action] = normalizeAgentActions({
+      text: "Покажи мені робочий дашборд.",
+      actions: [
+        {
+          type: "task_list",
+        },
+      ],
+      timezone: "Europe/Kiev",
+      now: "2026-06-05 16:38",
+      currentParticipant: "vania",
+    });
+
+    expect(action).toMatchObject({
+      type: "work_dashboard",
+    });
+  });
+
+  it("routes natural project list requests to the project list action", () => {
+    const [action] = normalizeAgentActions({
+      text: "Покажи список усіх проектів.",
+      actions: [
+        {
+          type: "task_list",
+        },
+      ],
+      timezone: "Europe/Kiev",
+      now: "2026-06-05 16:45",
+      currentParticipant: "vania",
+    });
+
+    expect(action).toMatchObject({
+      type: "project_list",
+    });
+  });
+
+  it("routes natural deadline requests to deadline filtering", () => {
+    const [action] = normalizeAgentActions({
+      text: "Покажи всі дедлайни по проекту Хмельпиво.",
+      actions: [
+        {
+          type: "task_list",
+        },
+      ],
+      timezone: "Europe/Kiev",
+      now: "2026-06-05 16:45",
+      currentParticipant: "vania",
+    });
+
+    expect(action).toMatchObject({
+      type: "task_deadlines",
+      project: "Хмельпиво",
+    });
+  });
+
+  it("routes natural project task requests to a project screen", () => {
+    const [action] = normalizeAgentActions({
+      text: "Покажи проект Хмельпиво і список його задач.",
+      actions: [
+        {
+          type: "task_list",
+        },
+      ],
+      timezone: "Europe/Kiev",
+      now: "2026-06-05 16:45",
+      currentParticipant: "vania",
+    });
+
+    expect(action).toMatchObject({
+      type: "project_show",
+      project: "Хмельпиво",
+    });
+  });
+
+  it("routes natural blocked task requests to blocked filtering", () => {
+    const [action] = normalizeAgentActions({
+      text: "Покажи заблоковані задачі по проекту Bar.",
+      actions: [
+        {
+          type: "task_list",
+        },
+      ],
+      timezone: "Europe/Kiev",
+      now: "2026-06-05 16:45",
+      currentParticipant: "vania",
+    });
+
+    expect(action).toMatchObject({
+      type: "task_blocked",
+      project: "Bar",
+    });
+  });
+
+  it("routes priority requests with project filters", () => {
+    const [action] = normalizeAgentActions({
+      text: "Покажи P1 по проекту Re.emotional.",
+      actions: [
+        {
+          type: "task_list",
+        },
+      ],
+      timezone: "Europe/Kiev",
+      now: "2026-06-05 16:45",
+      currentParticipant: "vania",
+    });
+
+    expect(action).toMatchObject({
+      type: "task_priorities",
+      priority: "P1",
+      project: "Re.emotional",
+    });
+  });
+
   it("understands the nearest upcoming Saturday", () => {
     const [action] = normalizeAgentActions({
       text: "Заплануй на наступну суботу тренування з йоги на 13-14.",

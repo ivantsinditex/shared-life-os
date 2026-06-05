@@ -56,14 +56,21 @@ import {
 import type { PlannedActivityRepository } from "../../domain/planned-activity.js";
 import {
   formatBasketLabel,
+  formatDeadlineTaskList,
+  formatPriorityTaskList,
+  formatProjectTaskList,
   formatTaskClosed,
   formatTaskLine,
   formatTaskList,
   formatTaskMoved,
   formatTaskSaved,
+  formatWorkDashboard,
+  formatWorkProjectList,
+  getProjectNames,
   sortTasksForWork,
 } from "../../domain/task-formatting.js";
 import type { NewWorkTask, WorkTask, WorkTaskRepository } from "../../domain/task.js";
+import type { WorkProjectRepository } from "../../domain/work-project.js";
 import {
   formatActiveTimeEntry,
   formatTimeStarted,
@@ -84,6 +91,7 @@ type PlanningCommandDeps = {
   planningTextParser: PlanningTextParserGateway;
   timeEntries: TimeEntryRepository;
   voiceTranscription: VoiceTranscriptionGateway;
+  workProjects: WorkProjectRepository;
   workTasks: WorkTaskRepository;
 };
 
@@ -98,6 +106,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     planningTextParser,
     timeEntries,
     voiceTranscription,
+    workProjects,
     workTasks,
   } = deps;
   const pendingPlans = new Map<string, NewPlannedActivity>();
@@ -109,6 +118,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
   const pendingClarifications = new Map<string, PendingClarification>();
   const recentActivitiesByUser = new Map<string, PlannedActivity[]>();
   const recentTasksByUser = new Map<string, WorkTask[]>();
+  const agentDashboardProjectsByChat = new Map<number, string[]>();
   const conversationHistoryByUser = new Map<string, AssistantConversationTurn[]>();
   const conversationMemoryPath = join(config.dataDir, "conversation-memory.json");
   let conversationMemoryLoaded = false;
@@ -116,42 +126,87 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
   bot.command("start", async (ctx) => {
     await ctx.reply(
       [
-        "Shared Life OS is awake.",
+        "Shared Life OS прокинувся.",
         "",
-        "Available now:",
-        "/health - check bot status",
-        "/plan - create a planned activity",
-        "/update - update a planned activity",
-        "/calendar_status - check Google Calendar connection",
-        "/sync_failed - show activities that need calendar retry",
-        "/resync_calendar - refresh calendar titles and descriptions",
-        "/whoami - show your Telegram identity mapping",
-        "/today - show today's dashboard",
-        "/week - show this week's planned activities",
-        "/task_add - add a task to a basket",
-        "/tasks - show open tasks",
-        "/task_move - move a task to another basket",
-        "/task_close - close a task",
-        "/work_dashboard - show work projects dashboard",
-        "/projects - show work projects",
-        "/project_add - create a work project",
-        "/project_rename - rename a work project",
-        "/project_delete - archive a work project",
-        "/project - show project tasks",
-        "/next_task - show next task by priority/deadline",
-        "/time_start - start tracking work time",
-        "/time_stop - stop active timer",
-        "/time_status - show active timer",
-        "/time_today - show today's tracked time",
-        "/time_week - show this week's tracked time",
-        "/analytics_today - show today's planning/work summary",
-        "/analytics_week - show this week's planning/work summary",
-        "/analytics_month - show this month's planning/work summary",
-        "/forget - clear this Telegram chat memory",
+        "Доступно зараз:",
+        "/health - перевірити статус бота",
+        "/plan - створити заплановану активність",
+        "/update - оновити заплановану активність",
+        "/calendar_status - перевірити Google Calendar",
+        "/sync_failed - показати активності з помилкою синхронізації",
+        "/resync_calendar - оновити назви й описи в календарі",
+        "/whoami - показати Telegram ID і мапінг учасника",
+        "/today - показати сьогодні",
+        "/week - показати цей тиждень",
+        "/task_add - додати задачу",
+        "/tasks - показати відкриті задачі",
+        "/task_move - перенести задачу в інший кошик",
+        "/task_close - закрити задачу",
+        "/work_dashboard - робоча панель проектів",
+        "/projects - показати проекти",
+        "/project_add - створити проект",
+        "/project_rename - перейменувати проект",
+        "/project_delete - архівувати проект",
+        "/project - показати задачі проекту",
+        "/next_task - показати наступну задачу",
+        "/time_start - почати трекати час",
+        "/time_stop - зупинити активний таймер",
+        "/time_status - показати активний таймер",
+        "/time_today - показати час за сьогодні",
+        "/time_week - показати час за тиждень",
+        "/analytics_today - аналітика за сьогодні",
+        "/analytics_week - аналітика за тиждень",
+        "/analytics_month - аналітика за місяць",
+        "/forget - очистити пам'ять цього чату",
         "",
-        "Voice messages can contain natural planning text too.",
+        "Голосом можна просити те саме людською мовою.",
       ].join("\n"),
     );
+  });
+
+  bot.callbackQuery(/^agent-work:project:(\d+)$/, async (ctx) => {
+    const project = getAgentDashboardProject(ctx, Number(ctx.match[1]));
+
+    if (!project) {
+      await ctx.answerCallbackQuery("Онови робочу панель і спробуй ще раз.");
+      return;
+    }
+
+    await ctx.answerCallbackQuery(project);
+    await replyWithAgentProject(ctx, project, Number(ctx.match[1]));
+  });
+
+  bot.callbackQuery("agent-work:dashboard", async (ctx) => {
+    await ctx.answerCallbackQuery("Робоча панель");
+    await replyWithAgentWorkDashboard(ctx);
+  });
+
+  bot.callbackQuery(/^agent-work:project-all:(\d+)$/, async (ctx) => {
+    const project = getAgentDashboardProject(ctx, Number(ctx.match[1]));
+
+    if (!project) {
+      await ctx.answerCallbackQuery("Онови робочу панель і спробуй ще раз.");
+      return;
+    }
+
+    const tasks = sortTasksForWork(await workTasks.list({ project }));
+
+    await ctx.answerCallbackQuery("Усі задачі");
+    await ctx.reply(formatTaskList(`Усі задачі: ${project}`, tasks));
+  });
+
+  bot.callbackQuery(/^agent-work:project-blocked:(\d+)$/, async (ctx) => {
+    const project = getAgentDashboardProject(ctx, Number(ctx.match[1]));
+
+    if (!project) {
+      await ctx.answerCallbackQuery("Онови робочу панель і спробуй ще раз.");
+      return;
+    }
+
+    const tasks = sortTasksForWork(await workTasks.list({ project, status: "blocked" }));
+
+    await ctx.answerCallbackQuery("Заблоковані");
+    await ctx.reply(formatTaskList(`Заблоковані задачі: ${project}`, tasks));
   });
 
   bot.command("health", async (ctx) => {
@@ -641,6 +696,82 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
       return;
     }
 
+    if (action.type === "work_dashboard") {
+      await replyWithAgentWorkDashboard(ctx);
+      return;
+    }
+
+    if (action.type === "project_list") {
+      const storedProjects = await workProjects.list({ status: "active" });
+      const tasks = await workTasks.list();
+      const projectNames = getProjectNames(tasks, storedProjects.map((project) => project.name));
+      const keyboard = buildAgentWorkDashboardKeyboard(projectNames);
+      const chatId = ctx.chat?.id;
+
+      if (chatId) {
+        agentDashboardProjectsByChat.set(chatId, projectNames);
+      }
+
+      await ctx.reply(
+        formatWorkProjectList(projectNames),
+        keyboard ? { reply_markup: keyboard } : undefined,
+      );
+      return;
+    }
+
+    if (action.type === "project_show") {
+      await replyWithAgentProject(ctx, action.project);
+      return;
+    }
+
+    if (action.type === "task_deadlines") {
+      const tasks = await workTasks.list({ basket: action.basket, project: action.project });
+      const filtered = action.priority
+        ? tasks.filter((task) => (task.priority ?? "P4") === action.priority)
+        : tasks;
+      const title = action.project
+        ? `Дедлайни: ${action.project}`
+        : action.priority
+          ? `Дедлайни: ${action.priority}`
+          : "Дедлайни";
+
+      rememberTasks(ctx, filtered);
+      await ctx.reply(formatDeadlineTaskList(title, filtered));
+      return;
+    }
+
+    if (action.type === "task_blocked") {
+      const tasks = await workTasks.list({ basket: action.basket, project: action.project, status: "blocked" });
+      const filtered = action.priority
+        ? tasks.filter((task) => (task.priority ?? "P4") === action.priority)
+        : tasks;
+      const title = action.project
+        ? `Заблоковані задачі: ${action.project}`
+        : action.priority
+          ? `Заблоковані задачі: ${action.priority}`
+          : "Заблоковані задачі";
+
+      rememberTasks(ctx, filtered);
+      await ctx.reply(formatTaskList(title, sortTasksForWork(filtered)));
+      return;
+    }
+
+    if (action.type === "task_priorities") {
+      const tasks = await workTasks.list({ basket: action.basket, project: action.project });
+      const filtered = action.priority
+        ? tasks.filter((task) => (task.priority ?? "P4") === action.priority)
+        : tasks;
+      const title = action.project
+        ? `Пріоритети: ${action.project}`
+        : action.priority
+          ? `Задачі ${action.priority}`
+          : "Пріоритети";
+
+      rememberTasks(ctx, filtered);
+      await ctx.reply(formatPriorityTaskList(title, filtered));
+      return;
+    }
+
     if (action.type === "task_move_recent") {
       const task = findRecentTask(ctx, action.taskId, action.titleContains);
 
@@ -742,6 +873,117 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
 
       await ctx.reply(formatTimeSummary("Затреканий час", entries, config.timezone));
     }
+  }
+
+  async function replyWithAgentWorkDashboard(ctx: Context): Promise<void> {
+    const tasks = await workTasks.list();
+    const storedProjects = await workProjects.list({ status: "active" });
+    const projectNames = storedProjects.map((project) => project.name);
+    const projects = getProjectNames(tasks, projectNames);
+    const chatId = ctx.chat?.id;
+    const participant = getCurrentParticipant(ctx, config);
+    const activeTimer = await timeEntries.getActive(participant ? { participant } : undefined);
+
+    if (chatId) {
+      agentDashboardProjectsByChat.set(chatId, projects);
+    }
+
+    const keyboard = buildAgentWorkDashboardKeyboard(projects);
+
+    await ctx.reply(
+      formatWorkDashboard(tasks, projectNames, {
+        activeTimers: activeTimer ? [activeTimer] : [],
+        participant,
+        timezone: config.timezone,
+      }),
+      keyboard ? { reply_markup: keyboard } : undefined,
+    );
+  }
+
+  async function replyWithAgentProject(ctx: Context, project: string, projectIndex?: number): Promise<void> {
+    const tasks = sortTasksForWork(await workTasks.list({ project }));
+    const resolvedIndex = projectIndex ?? await getAgentProjectIndex(ctx, project);
+    const keyboard = buildAgentProjectKeyboard(tasks, resolvedIndex);
+
+    rememberTasks(ctx, tasks);
+    await ctx.reply(formatProjectTaskList(project, tasks), { reply_markup: keyboard });
+  }
+
+  function buildAgentWorkDashboardKeyboard(projects: string[]): InlineKeyboard | undefined {
+    if (projects.length === 0) {
+      return undefined;
+    }
+
+    const keyboard = new InlineKeyboard();
+
+    projects.forEach((project, index) => {
+      keyboard.text(project, `agent-work:project:${index}`).row();
+    });
+
+    return keyboard;
+  }
+
+  function buildAgentProjectKeyboard(tasks: WorkTask[], projectIndex?: number): InlineKeyboard {
+    const activeTasks = tasks.filter((task) => task.status !== "closed");
+    const keyboard = new InlineKeyboard();
+
+    activeTasks.slice(0, 5).forEach((task, index) => {
+      const number = index + 1;
+
+      if (task.status === "open") {
+        keyboard
+          .text(`▶️ Старт #${number}`, `task:track:${task.id}`)
+          .text(`✅ Готово #${number}`, `task:close:${task.id}`)
+          .row()
+          .text(`⚠️ Блок #${number}`, `task:block:${task.id}`)
+          .row();
+      } else {
+        keyboard.text(`↩️ Розблокувати #${number}`, `task:unblock:${task.id}`).row();
+      }
+    });
+
+    if (projectIndex !== undefined) {
+      keyboard
+        .text("📋 Показати всі", `agent-work:project-all:${projectIndex}`)
+        .text("⚠️ Заблоковані", `agent-work:project-blocked:${projectIndex}`)
+        .row()
+        .text("⬅️ Назад", "agent-work:dashboard")
+        .row();
+    }
+
+    return keyboard;
+  }
+
+  function getAgentDashboardProject(ctx: Context, index: number): string | undefined {
+    const chatId = ctx.chat?.id;
+    const projects = chatId ? agentDashboardProjectsByChat.get(chatId) : undefined;
+
+    return projects?.[index];
+  }
+
+  async function getAgentProjectIndex(ctx: Context, project: string): Promise<number | undefined> {
+    const chatId = ctx.chat?.id;
+    const existingProjects = chatId ? agentDashboardProjectsByChat.get(chatId) : undefined;
+
+    if (existingProjects) {
+      const index = existingProjects.findIndex((item) => item.localeCompare(project, "uk", { sensitivity: "base" }) === 0);
+
+      if (index >= 0) {
+        return index;
+      }
+    }
+
+    const storedProjects = await workProjects.list({ status: "active" });
+    const tasks = await workTasks.list();
+    const projectNames = getProjectNames(tasks, storedProjects.map((item) => item.name));
+
+    if (chatId) {
+      agentDashboardProjectsByChat.set(chatId, projectNames);
+    }
+
+    const index = projectNames.findIndex((item) => item.localeCompare(project, "uk", { sensitivity: "base" }) === 0);
+
+    return index >= 0 ? index : undefined;
   }
 
   function formatAgentCreateAction(action: Extract<AssistantAgentAction, { type: "draft_create" }>): string {

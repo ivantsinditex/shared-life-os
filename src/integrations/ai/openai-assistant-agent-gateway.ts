@@ -104,6 +104,34 @@ export type AssistantAgentAction =
       project?: string;
     }
   | {
+      type: "work_dashboard";
+    }
+  | {
+      type: "project_list";
+    }
+  | {
+      type: "project_show";
+      project: string;
+    }
+  | {
+      type: "task_deadlines";
+      project?: string;
+      basket?: TaskBasket;
+      priority?: TaskPriority;
+    }
+  | {
+      type: "task_blocked";
+      project?: string;
+      basket?: TaskBasket;
+      priority?: TaskPriority;
+    }
+  | {
+      type: "task_priorities";
+      project?: string;
+      basket?: TaskBasket;
+      priority?: TaskPriority;
+    }
+  | {
       type: "task_move_recent";
       taskId?: string;
       titleContains?: string;
@@ -155,6 +183,12 @@ const agentResponseSchema = z.object({
         "ask_clarification",
         "task_create",
         "task_list",
+        "work_dashboard",
+        "project_list",
+        "project_show",
+        "task_deadlines",
+        "task_blocked",
+        "task_priorities",
         "task_move_recent",
         "task_close_recent",
         "time_start",
@@ -415,6 +449,12 @@ function buildAgentPrompt(timezone: string, now: string, currentParticipant?: Ag
     "Deadline phrases: сьогодні -> current local date, завтра -> next day, пт/п'ятниця -> nearest future Friday unless user says current week/next week. Use YYYY-MM-DD.",
     "If priority is missing but the task sounds urgent/911/сьогодні/терміново, use P1. If priority is missing otherwise, use P4.",
     "For requests like show/list/покажи 911/операційку/tasks or project backlog, return task_list. Fill task_project when a project is named.",
+    "For work dashboard / робочий дашборд / робоча панель / dashboard по проектах, return work_dashboard, not task_list.",
+    "For project list / список усіх проектів / покажи проекти, return project_list, not task_list.",
+    "For requests to show one project's tasks/backlog, such as 'покажи проект Хмельпиво', 'список задач по Хмельпиво', return project_show with task_project.",
+    "For deadlines / дедлайни / терміни / що горить, return task_deadlines. Fill task_project, task_basket, task_priority if the user filters by project, category/basket, or priority.",
+    "For blocked / заблоковані задачі, return task_blocked. Fill task_project, task_basket, task_priority if filtered.",
+    "For priorities / пріоритети / покажи P1 / задачі P2, return task_priorities. Fill task_priority if a concrete P1/P2/P3/P4 is named, and task_project/task_basket if filtered.",
     "For 'next task/наступна задача' return task_list with the project if named; the application will choose the highest priority task.",
     "For requests like move/перенеси this task to deep work, return task_move_recent with the matching open task id and target basket.",
     "For requests like close/done/закрий task, return task_close_recent with the matching open task id.",
@@ -438,7 +478,12 @@ export function normalizeAgentActions(params: {
   currentParticipant?: AgentParticipant;
 }): AssistantAgentAction[] {
   const createIntent = hasCreateIntent(params.text) && !hasExplicitUpdateOrDeleteIntent(params.text);
+  const workViewAction = !createIntent ? buildWorkViewActionFromText(params.text) : undefined;
   const fallbackCreateAction = createIntent ? buildCreateActionFromAnswerOnlyResult(params) : undefined;
+
+  if (workViewAction) {
+    return [workViewAction];
+  }
 
   if (fallbackCreateAction) {
     return [normalizeDraftCreateAction(fallbackCreateAction, params)];
@@ -1294,6 +1339,59 @@ function toAgentAction(action: z.infer<typeof agentResponseSchema>["actions"][nu
     };
   }
 
+  if (action.type === "work_dashboard") {
+    return {
+      type: "work_dashboard",
+    };
+  }
+
+  if (action.type === "project_list") {
+    return {
+      type: "project_list",
+    };
+  }
+
+  if (action.type === "project_show") {
+    if (!action.task_project && !action.title) {
+      return {
+        type: "ask_clarification",
+        message: action.message || "Який проект показати?",
+      };
+    }
+
+    return {
+      type: "project_show",
+      project: action.task_project || action.title,
+    };
+  }
+
+  if (action.type === "task_deadlines") {
+    return {
+      type: "task_deadlines",
+      project: emptyToUndefined(action.task_project),
+      basket: emptyToUndefined(action.task_basket) as TaskBasket | undefined,
+      priority: emptyToUndefined(action.task_priority) as TaskPriority | undefined,
+    };
+  }
+
+  if (action.type === "task_blocked") {
+    return {
+      type: "task_blocked",
+      project: emptyToUndefined(action.task_project),
+      basket: emptyToUndefined(action.task_basket) as TaskBasket | undefined,
+      priority: emptyToUndefined(action.task_priority) as TaskPriority | undefined,
+    };
+  }
+
+  if (action.type === "task_priorities") {
+    return {
+      type: "task_priorities",
+      project: emptyToUndefined(action.task_project),
+      basket: emptyToUndefined(action.task_basket) as TaskBasket | undefined,
+      priority: emptyToUndefined(action.task_priority) as TaskPriority | undefined,
+    };
+  }
+
   if (action.type === "task_move_recent") {
     if (!action.target_task_basket) {
       return {
@@ -1389,6 +1487,136 @@ function normalizeTaskDeadline(value: string): string | undefined {
   return dateOnly ?? trimmed;
 }
 
+function buildWorkViewActionFromText(text: string): AssistantAgentAction | undefined {
+  const normalized = text.toLowerCase();
+
+  if (includesAny(normalized, ["дедлайн", "deadline", "термін", "що горить"])) {
+    const project = extractProjectFromText(text);
+    const basket = extractBasketFromText(normalized);
+    const priority = extractPriority(text);
+
+    return {
+      type: "task_deadlines",
+      ...(project ? { project } : {}),
+      ...(basket ? { basket } : {}),
+      ...(priority ? { priority } : {}),
+    };
+  }
+
+  if (includesAny(normalized, ["заблокован", "blocked", "блокован"])) {
+    const project = extractProjectFromText(text);
+    const basket = extractBasketFromText(normalized);
+    const priority = extractPriority(text);
+
+    return {
+      type: "task_blocked",
+      ...(project ? { project } : {}),
+      ...(basket ? { basket } : {}),
+      ...(priority ? { priority } : {}),
+    };
+  }
+
+  if (/\b(p[1-4])\b/i.test(text) || includesAny(normalized, ["пріоритет", "приорітет", "priority"])) {
+    const project = extractProjectFromText(text);
+    const basket = extractBasketFromText(normalized);
+    const priority = extractPriority(text);
+
+    return {
+      type: "task_priorities",
+      ...(priority ? { priority } : {}),
+      ...(project ? { project } : {}),
+      ...(basket ? { basket } : {}),
+    };
+  }
+
+  if (includesAny(normalized, ["робочий дашборд", "робоча панель", "work dashboard", "dashboard по проектах", "дашборд"])) {
+    return {
+      type: "work_dashboard",
+    };
+  }
+
+  if (
+    includesAny(normalized, ["список усіх проект", "усі проект", "всі проект", "покажи проект", "show projects"]) &&
+    !includesAny(normalized, ["задач", "таск", "backlog", "беклог"])
+  ) {
+    return {
+      type: "project_list",
+    };
+  }
+
+  if (includesAny(normalized, ["покажи проект", "задачі проект", "таски проект", "беклог проект", "список задач"])) {
+    const project = extractProjectFromText(text);
+
+    if (project) {
+      return {
+        type: "project_show",
+        project,
+      };
+    }
+  }
+
+  return undefined;
+}
+
+function extractPriority(text: string): TaskPriority | undefined {
+  const match = /\b(P[1-4])\b/i.exec(text);
+
+  return match ? (match[1].toUpperCase() as TaskPriority) : undefined;
+}
+
+function extractBasketFromText(text: string): TaskBasket | undefined {
+  if (text.includes("911")) return "911";
+  if (includesAny(text, ["операцій", "operational"])) return "operational";
+  if (includesAny(text, ["deep work", "глибок"])) return "deep_work";
+  if (includesAny(text, ["рандом", "random"])) return "random";
+  if (includesAny(text, ["бренд", "personal brand"])) return "personal_brand";
+
+  return undefined;
+}
+
+function extractProjectFromText(text: string): string | undefined {
+  const patterns = [
+    /(?:проект(?:у|і)?|project)\s+["“]?([^"”;:!?]+)["”]?/i,
+    /(?:по|для|у|в)\s+["“]?([A-Za-zА-Яа-яІіЇїЄєҐґ0-9_. -]{2,40})["”]?(?:\s+(?:проект|задач|таск|беклог|дедлайн|пріоритет|приорітет)|[.,;:!?]|$)/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = pattern.exec(text);
+    const project = cleanupProjectName(match?.[1]);
+
+    if (project && !isGenericProjectWord(project)) {
+      return project;
+    }
+  }
+
+  return undefined;
+}
+
+function cleanupProjectName(value: string | undefined): string | undefined {
+  const cleaned = value
+    ?.replace(/\s+(?:і|та)\s+(?:список|задач|таск|беклог).*$/i, "")
+    .replace(/[.,;:!?]+$/g, "")
+    .trim();
+
+  return cleaned ? cleaned : undefined;
+}
+
+function isGenericProjectWord(value: string): boolean {
+  return [
+    "всі",
+    "всіх",
+    "усі",
+    "усіх",
+    "все",
+    "список",
+    "задачі",
+    "задач",
+    "таски",
+    "проект",
+    "проекти",
+  ].includes(value.toLowerCase());
+}
+
 const agentPlanSchema = {
   type: "object",
   additionalProperties: false,
@@ -1447,6 +1675,12 @@ const agentPlanSchema = {
               "ask_clarification",
               "task_create",
               "task_list",
+              "work_dashboard",
+              "project_list",
+              "project_show",
+              "task_deadlines",
+              "task_blocked",
+              "task_priorities",
               "task_move_recent",
               "task_close_recent",
               "time_start",
