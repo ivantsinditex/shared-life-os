@@ -567,6 +567,12 @@ function detectRelativeDate(text: string, now: DateTime): DateTime | undefined {
     return now.startOf("day").plus({ days: directDayOffset });
   }
 
+  const explicitNextWeekday = detectExplicitNextWeekday(normalized, now);
+
+  if (explicitNextWeekday) {
+    return explicitNextWeekday;
+  }
+
   const weekOffset = detectRelativeWeekOffset(normalized);
   const targetWeekday = detectWeekday(text);
 
@@ -585,6 +591,20 @@ function detectRelativeDate(text: string, now: DateTime): DateTime | undefined {
   }
 
   return undefined;
+}
+
+function detectExplicitNextWeekday(normalizedText: string, now: DateTime): DateTime | undefined {
+  if (!includesAny(normalizedText, ["наступн", "следующ", "next"])) {
+    return undefined;
+  }
+
+  const targetWeekday = detectWeekday(normalizedText);
+
+  if (!targetWeekday) {
+    return undefined;
+  }
+
+  return nextWeekdayFrom(now.startOf("day"), targetWeekday, { includeToday: false });
 }
 
 function detectDirectDayOffset(normalizedText: string): number | undefined {
@@ -650,9 +670,13 @@ function detectNearestFutureWeekday(text: string, now: DateTime): DateTime | und
   return nextWeekdayFrom(now.startOf("day"), targetWeekday);
 }
 
-function nextWeekdayFrom(date: DateTime, targetWeekday: number): DateTime {
+function nextWeekdayFrom(
+  date: DateTime,
+  targetWeekday: number,
+  options: { includeToday?: boolean } = {},
+): DateTime {
   const daysUntilTarget = (targetWeekday - date.weekday + 7) % 7;
-  return date.plus({ days: daysUntilTarget === 0 ? 0 : daysUntilTarget });
+  return date.plus({ days: daysUntilTarget === 0 && options.includeToday === false ? 7 : daysUntilTarget });
 }
 
 function detectWeekday(text: string): number | undefined {

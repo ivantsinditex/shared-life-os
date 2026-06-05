@@ -225,6 +225,31 @@ describe("normalizeAgentActions", () => {
     });
   });
 
+  it("keeps explicit next weekday from resolving to today", () => {
+    const [action] = normalizeAgentActions({
+      text: "Додай на наступну п'ятницю побачення з Настею з 12 по 13 дня.",
+      actions: [
+        {
+          ...baseCreateAction,
+          title: "Побачення з Настею",
+          participant: "both",
+          category: "together",
+          start: "2026-06-05 12:00",
+        },
+      ],
+      timezone: "Europe/Kiev",
+      now: "2026-06-05 12:18",
+      currentParticipant: "vania",
+    });
+
+    expect(action).toMatchObject({
+      type: "draft_create",
+      participant: "both",
+      category: "together",
+      start: "2026-06-12 12:00",
+    });
+  });
+
   it("understands a weekday through one week", () => {
     const [action] = normalizeAgentActions({
       text: "Заплануй суботу через одну неділю тренування з йоги на 13-14.",
