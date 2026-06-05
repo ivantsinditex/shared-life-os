@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
 import { DateTime } from "luxon";
 import { InlineKeyboard, type Bot, type Context } from "grammy";
@@ -105,6 +107,8 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
   const recentActivitiesByUser = new Map<string, PlannedActivity[]>();
   const recentTasksByUser = new Map<string, WorkTask[]>();
   const conversationHistoryByUser = new Map<string, AssistantConversationTurn[]>();
+  const conversationMemoryPath = join(config.dataDir, "conversation-memory.json");
+  let conversationMemoryLoaded = false;
 
   bot.command("start", async (ctx) => {
     await ctx.reply(
@@ -163,7 +167,9 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
   });
 
   bot.command("forget", async (ctx) => {
+    await ensureConversationMemoryLoaded();
     conversationHistoryByUser.delete(userContextKey(ctx));
+    await persistConversationMemory();
 
     await ctx.reply("Ок, я очистив пам'ять цієї розмови. Календар, задачі й трекінг часу не чіпав.");
   });
@@ -454,6 +460,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
   };
 
   async function handleAgentText(ctx: Context, text: string): Promise<boolean> {
+    await ensureConversationMemoryLoaded();
     const contextActivities = await loadAgentContextActivities(ctx);
 
     const result = await assistantAgent.respond({
@@ -465,11 +472,13 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
       activeTimeEntry: await timeEntries.getActive(),
       conversationHistory: conversationHistoryByUser.get(userContextKey(ctx)) ?? [],
       currentParticipant: getCurrentParticipant(ctx, config),
+      enableWebSearch: looksLikeLiveInformationRequest(text),
     });
 
     const actionableActions = result.actions.filter((action) => action.type !== "answer");
-    rememberConversation(ctx, "user", text);
-    rememberConversation(ctx, "assistant", summarizeAssistantResult(result));
+    recordConversation(ctx, "user", text);
+    recordConversation(ctx, "assistant", summarizeAssistantResult(result));
+    await persistConversationMemory();
 
     if (result.reply && actionableActions.length === 0) {
       await ctx.reply(result.reply);
@@ -1343,7 +1352,45 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     );
   }
 
-  function rememberConversation(ctx: Context, role: AssistantConversationTurn["role"], content: string): void {
+  async function ensureConversationMemoryLoaded(): Promise<void> {
+    if (conversationMemoryLoaded) {
+      return;
+    }
+
+    await mkdir(config.dataDir, { recursive: true });
+
+    try {
+      const raw = await readFile(conversationMemoryPath, "utf8");
+      const stored = JSON.parse(raw) as Record<string, AssistantConversationTurn[]>;
+
+      for (const [key, turns] of Object.entries(stored)) {
+        conversationHistoryByUser.set(
+          key,
+          turns
+            .filter(isConversationTurn)
+            .slice(-16),
+        );
+      }
+    } catch (error) {
+      if (!isMissingFile(error)) {
+        throw error;
+      }
+
+      await persistConversationMemory();
+    } finally {
+      conversationMemoryLoaded = true;
+    }
+  }
+
+  async function persistConversationMemory(): Promise<void> {
+    await mkdir(config.dataDir, { recursive: true });
+    await writeFile(
+      conversationMemoryPath,
+      JSON.stringify(Object.fromEntries(conversationHistoryByUser), null, 2),
+    );
+  }
+
+  function recordConversation(ctx: Context, role: AssistantConversationTurn["role"], content: string): void {
     const trimmed = content.trim();
 
     if (!trimmed) {
@@ -1359,6 +1406,20 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     };
 
     conversationHistoryByUser.set(key, [...existing, nextTurn].slice(-16));
+  }
+
+  function isConversationTurn(value: unknown): value is AssistantConversationTurn {
+    if (!value || typeof value !== "object") {
+      return false;
+    }
+
+    const candidate = value as Partial<AssistantConversationTurn>;
+
+    return (
+      (candidate.role === "user" || candidate.role === "assistant") &&
+      typeof candidate.content === "string" &&
+      typeof candidate.createdAt === "string"
+    );
   }
 
   function summarizeAssistantResult(result: { reply: string; actions: AssistantAgentAction[] }): string {
@@ -1423,6 +1484,31 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     const maxLength = 1_500;
 
     return content.length > maxLength ? `${content.slice(0, maxLength)}...` : content;
+  }
+
+  function looksLikeLiveInformationRequest(text: string): boolean {
+    const normalized = text.toLowerCase();
+
+    return [
+      "новини",
+      "сьогодні",
+      "з ранку",
+      "актуальн",
+      "останні",
+      "latest",
+      "today",
+      "news",
+      "зараз",
+      "ціна",
+      "курс",
+      "погода",
+      "weather",
+      "price",
+      "current",
+      "recent",
+      "недавно",
+      "нещодавно",
+    ].some((marker) => normalized.includes(marker));
   }
 
   function findRecentTask(ctx: Context, taskId?: string, titleContains?: string): WorkTask | undefined {
@@ -3014,4 +3100,12 @@ function formatMissingActivityHelp(action: "delete" | "update"): string {
     "- Заміни учасника в операційній роботі в середу з Насті на Ваню.",
     "- Покажи /today або /week, а потім попроси змінити конкретну подію.",
   ].join("\n");
+}
+
+function isMissingFile(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    (error as NodeJS.ErrnoException).code === "ENOENT"
+  );
 }

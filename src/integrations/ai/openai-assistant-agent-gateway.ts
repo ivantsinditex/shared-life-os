@@ -37,6 +37,7 @@ export type AssistantAgentInput = {
   conversationHistory?: AssistantConversationTurn[];
   activeTimeEntry?: TimeEntry;
   currentParticipant?: AgentParticipant;
+  enableWebSearch?: boolean;
 };
 
 export type AssistantAgentResult = {
@@ -287,9 +288,23 @@ class OpenAiAssistantAgentGateway implements AssistantAgentGateway {
               open_tasks: input.openTasks.map(toOpenTaskContext),
               active_time_entry: input.activeTimeEntry ? toActiveTimeEntryContext(input.activeTimeEntry) : null,
               current_participant: input.currentParticipant ?? "",
+              web_search_enabled: input.enableWebSearch === true,
             }),
           },
         ],
+        tools: input.enableWebSearch
+          ? [
+            {
+              type: "web_search",
+              user_location: {
+                type: "approximate",
+                country: "UA",
+                timezone: input.timezone,
+              },
+            },
+          ]
+          : undefined,
+        tool_choice: input.enableWebSearch ? "auto" : undefined,
         text: {
           format: {
             type: "json_schema",
@@ -324,7 +339,8 @@ function buildAgentPrompt(timezone: string, now: string, currentParticipant?: Ag
     `Timezone: ${timezone}. Current local datetime: ${now}.`,
     "Use conversation_history as short-term memory for normal chat. Resolve follow-ups like 'the first one', 'цей перший', 'про перший', 'розкажи детальніше', 'продовжи', 'а другий?', and pronouns from the last relevant assistant/user turns.",
     "If the user asks a general non-calendar question, answer normally with action type answer. Do not force every message into planning.",
-    "If the user asks for current/latest news, live prices, today's events, or other live facts, say that live web search is not connected yet and offer to add it later. Do not invent fresh news.",
+    "If the user asks for current/latest news, live prices, today's events, or other live facts and web_search_enabled is true, use web search and answer with source links/citations when available.",
+    "If the user asks for current/latest news, live prices, today's events, or other live facts and web_search_enabled is false, say that live web search is not connected for this request. Do not invent fresh news.",
     "For general recommendations or explanations, keep enough detail to make follow-up questions meaningful, and preserve names/titles so later ordinals can refer to them.",
     "Act like a helpful assistant, but never directly perform destructive actions. For deletes, return draft_delete_recent or draft_delete_many so the app can ask for confirmation.",
     "If the user asks to create several future activities in one message, return one draft_create action for every activity. Never turn one of the requested activities into a plain answer.",
