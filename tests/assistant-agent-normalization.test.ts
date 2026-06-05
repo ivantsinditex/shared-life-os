@@ -200,4 +200,74 @@ describe("normalizeAgentActions", () => {
       privacy: "busy_only",
     });
   });
+
+  it("understands the nearest upcoming Saturday", () => {
+    const [action] = normalizeAgentActions({
+      text: "Заплануй на наступну суботу тренування з йоги на 13-14.",
+      actions: [
+        {
+          ...baseCreateAction,
+          title: "Тренування з йоги",
+          participant: "both",
+          category: "sport",
+          start: "2026-06-13 13:00",
+        },
+      ],
+      timezone: "Europe/Kiev",
+      now: "2026-06-05 11:23",
+      currentParticipant: "vania",
+    });
+
+    expect(action).toMatchObject({
+      type: "draft_create",
+      participant: "vania",
+      start: "2026-06-06 13:00",
+    });
+  });
+
+  it("understands a weekday through one week", () => {
+    const [action] = normalizeAgentActions({
+      text: "Заплануй суботу через одну неділю тренування з йоги на 13-14.",
+      actions: [
+        {
+          ...baseCreateAction,
+          title: "Тренування з йоги",
+          participant: "vania",
+          category: "sport",
+          start: "2026-06-06 13:00",
+        },
+      ],
+      timezone: "Europe/Kiev",
+      now: "2026-06-05 11:23",
+      currentParticipant: "vania",
+    });
+
+    expect(action).toMatchObject({
+      type: "draft_create",
+      start: "2026-06-13 13:00",
+    });
+  });
+
+  it("understands a weekday after the same weekday", () => {
+    const [action] = normalizeAgentActions({
+      text: "Заплануй суботу через суботу тренування з йоги на 13-14.",
+      actions: [
+        {
+          ...baseCreateAction,
+          title: "Тренування з йоги",
+          participant: "vania",
+          category: "sport",
+          start: "2026-06-06 13:00",
+        },
+      ],
+      timezone: "Europe/Kiev",
+      now: "2026-06-05 11:23",
+      currentParticipant: "vania",
+    });
+
+    expect(action).toMatchObject({
+      type: "draft_create",
+      start: "2026-06-13 13:00",
+    });
+  });
 });

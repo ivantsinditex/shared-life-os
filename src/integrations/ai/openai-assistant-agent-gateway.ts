@@ -361,6 +361,7 @@ function buildAgentPrompt(timezone: string, now: string, currentParticipant?: Ag
     "For daily or weekly plan dictation, split the message into all concrete time blocks. A line like '05-08 біг' means a draft_create with start 05:00 and duration 180 minutes.",
     "For weekday labels in Ukrainian/Russian/English (ПН/понеділок/Monday, ВТ, СР, ЧТ, ПТ, СБ, НД), map them to the requested week. 'цей тиждень/на тиждень' means the current local week; 'наступний тиждень' means the next local week. If the week is truly ambiguous, ask a clarification.",
     "For new create requests with a weekday but without an explicit week, choose the nearest future occurrence of that weekday. Example: if today is Friday and the user says 'на понеділок', use the next Monday, not today and not the previous Monday.",
+    "For relative calendar phrases, reason from the current local date. Examples: 'через 3 дні' means current date plus 3 days; 'через тиждень' means plus 7 days; 'субота через тиждень' means the Saturday in that future week; 'субота через суботу' means skip the nearest Saturday and use the following Saturday.",
     "If the user gives both weekday and date, such as 'понеділок 8 червня', trust the explicit date and keep the weekday only as context.",
     "For flexible scheduling phrases like random hours/рандомні години/сам розберись/будь-які години, choose reasonable non-overlapping local times yourself using recent_activities as constraints. Prefer daytime slots 09:00-20:00 unless the user gave a specific time window.",
     "If the user requests daily work/reading/learning blocks without exact hours, create one draft_create per day and choose available-looking times. Do not ask for exact hours just because the user allowed random hours.",
@@ -504,7 +505,7 @@ function normalizeCreateStartFromUserText(
   }
 
   const explicitDate = detectExplicitDayMonth(text, now, timezone);
-  const targetDate = explicitDate ?? detectNearestFutureWeekday(text, now);
+  const targetDate = explicitDate ?? detectRelativeDate(text, now) ?? detectNearestFutureWeekday(text, now);
 
   if (!targetDate) {
     return modelStart;
@@ -558,6 +559,87 @@ function detectExplicitDayMonth(text: string, now: DateTime, timezone: string): 
   return date;
 }
 
+function detectRelativeDate(text: string, now: DateTime): DateTime | undefined {
+  const normalized = normalizeText(text);
+  const directDayOffset = detectDirectDayOffset(normalized);
+
+  if (directDayOffset !== undefined) {
+    return now.startOf("day").plus({ days: directDayOffset });
+  }
+
+  const weekOffset = detectRelativeWeekOffset(normalized);
+  const targetWeekday = detectWeekday(text);
+
+  if (weekOffset !== undefined && targetWeekday) {
+    return nextWeekdayFrom(now.startOf("day").plus({ weeks: weekOffset }), targetWeekday);
+  }
+
+  if (weekOffset !== undefined) {
+    return now.startOf("day").plus({ weeks: weekOffset });
+  }
+
+  const skippedSameWeekday = detectSkippedSameWeekday(normalized);
+
+  if (skippedSameWeekday) {
+    return nextWeekdayFrom(now.startOf("day"), skippedSameWeekday).plus({ weeks: 1 });
+  }
+
+  return undefined;
+}
+
+function detectDirectDayOffset(normalizedText: string): number | undefined {
+  if (includesAny(normalizedText, ["сьогодні", "сегодня", "today"])) {
+    return 0;
+  }
+
+  if (includesAny(normalizedText, ["післязавтра", "послезавтра", "day after tomorrow"])) {
+    return 2;
+  }
+
+  if (includesAny(normalizedText, ["завтра", "tomorrow"])) {
+    return 1;
+  }
+
+  const match = normalizedText.match(/через\s+([a-zа-яіїєґ0-9]+)\s+(день|дні|дня|днів|дней|дня|days?|добу|доби)/u);
+
+  if (!match) {
+    return undefined;
+  }
+
+  return parseSmallInteger(match[1]);
+}
+
+function detectRelativeWeekOffset(normalizedText: string): number | undefined {
+  const weekMatch = normalizedText.match(/через\s+([a-zа-яіїєґ0-9]+)?\s*(тиждень|тижні|тижня|тижнів|неділю|неделю|недели|недель|week|weeks)/u);
+
+  if (weekMatch) {
+    return weekMatch[1] ? parseSmallInteger(weekMatch[1]) : 1;
+  }
+
+  if (includesAny(normalizedText, ["наступного тижня", "следующей недели", "next week"])) {
+    return 1;
+  }
+
+  return undefined;
+}
+
+function detectSkippedSameWeekday(normalizedText: string): number | undefined {
+  const weekday = detectWeekday(normalizedText);
+
+  if (!weekday) {
+    return undefined;
+  }
+
+  const weekdayAliases = weekdayTerms(weekday);
+
+  return weekdayAliases.some((alias) =>
+    new RegExp(`${escapeRegExp(alias)}\\s+через\\s+${escapeRegExp(alias)}`, "u").test(normalizedText) ||
+    new RegExp(`${escapeRegExp(alias)}\\s*,?\\s+через\\s+одн(у|а|о)?\\s+(неділю|неделю|тиждень|week)`, "u").test(normalizedText),
+  )
+    ? weekday
+    : undefined;
+}
+
 function detectNearestFutureWeekday(text: string, now: DateTime): DateTime | undefined {
   const targetWeekday = detectWeekday(text);
 
@@ -565,26 +647,91 @@ function detectNearestFutureWeekday(text: string, now: DateTime): DateTime | und
     return undefined;
   }
 
-  const daysUntilTarget = (targetWeekday - now.weekday + 7) % 7;
-  return now.startOf("day").plus({ days: daysUntilTarget === 0 ? 0 : daysUntilTarget });
+  return nextWeekdayFrom(now.startOf("day"), targetWeekday);
+}
+
+function nextWeekdayFrom(date: DateTime, targetWeekday: number): DateTime {
+  const daysUntilTarget = (targetWeekday - date.weekday + 7) % 7;
+  return date.plus({ days: daysUntilTarget === 0 ? 0 : daysUntilTarget });
 }
 
 function detectWeekday(text: string): number | undefined {
   const normalized = normalizeText(text);
   const weekdayPatterns: Array<[number, { words: string[]; tokens: string[] }]> = [
-    [1, { words: ["понеділок", "понедельник", "monday"], tokens: ["пн", "mon"] }],
-    [2, { words: ["вівторок", "вторник", "tuesday"], tokens: ["вт", "tue"] }],
-    [3, { words: ["середа", "среда", "wednesday"], tokens: ["ср", "wed"] }],
-    [4, { words: ["четвер", "четверг", "thursday"], tokens: ["чт", "thu"] }],
-    [5, { words: ["пʼятниця", "п'ятниця", "пятниця", "пятница", "friday"], tokens: ["пт", "fri"] }],
-    [6, { words: ["субота", "суббота", "saturday"], tokens: ["сб", "sat"] }],
-    [7, { words: ["неділя", "воскресенье", "sunday"], tokens: ["нд", "sun"] }],
+    [1, { words: weekdayTerms(1), tokens: ["пн", "mon"] }],
+    [2, { words: weekdayTerms(2), tokens: ["вт", "tue"] }],
+    [3, { words: weekdayTerms(3), tokens: ["ср", "wed"] }],
+    [4, { words: weekdayTerms(4), tokens: ["чт", "thu"] }],
+    [5, { words: weekdayTerms(5), tokens: ["пт", "fri"] }],
+    [6, { words: weekdayTerms(6), tokens: ["сб", "sat"] }],
+    [7, { words: weekdayTerms(7), tokens: ["нд", "sun"] }],
   ];
 
   return weekdayPatterns.find(([, patterns]) =>
     patterns.words.some((pattern) => normalized.includes(pattern)) ||
     patterns.tokens.some((pattern) => includesToken(normalized, pattern)),
   )?.[0];
+}
+
+function weekdayTerms(weekday: number): string[] {
+  const terms: Record<number, string[]> = {
+    1: ["понеділок", "понеділка", "понедельник", "понедельника", "monday"],
+    2: ["вівторок", "вівторка", "вторник", "вторника", "tuesday"],
+    3: ["середа", "середу", "среда", "среду", "wednesday"],
+    4: ["четвер", "четверга", "thursday"],
+    5: ["пʼятниця", "пʼятницю", "п'ятниця", "п'ятницю", "пятниця", "пятницю", "пятница", "пятницу", "friday"],
+    6: ["субота", "суботу", "суббота", "субботу", "saturday"],
+    7: ["неділя", "неділю", "воскресенье", "воскресенье", "sunday"],
+  };
+
+  return terms[weekday] ?? [];
+}
+
+function parseSmallInteger(value: string): number | undefined {
+  const numeric = Number(value);
+
+  if (Number.isInteger(numeric) && numeric >= 0) {
+    return numeric;
+  }
+
+  const normalized = normalizeText(value);
+  const words: Record<string, number> = {
+    один: 1,
+    одна: 1,
+    одну: 1,
+    одно: 1,
+    one: 1,
+    два: 2,
+    дві: 2,
+    две: 2,
+    two: 2,
+    три: 3,
+    three: 3,
+    чотири: 4,
+    четыре: 4,
+    four: 4,
+    пʼять: 5,
+    "п'ять": 5,
+    пять: 5,
+    five: 5,
+    шість: 6,
+    шесть: 6,
+    six: 6,
+    сім: 7,
+    семь: 7,
+    seven: 7,
+    вісім: 8,
+    восемь: 8,
+    eight: 8,
+    девʼять: 9,
+    "дев'ять": 9,
+    девять: 9,
+    nine: 9,
+    десять: 10,
+    ten: 10,
+  };
+
+  return words[normalized];
 }
 
 function monthNumber(month: string): number | undefined {
