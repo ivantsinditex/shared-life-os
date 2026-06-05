@@ -22,12 +22,19 @@ type AgentCategory =
   | "other";
 type AgentPrivacy = "private" | "busy_only" | "shared_details";
 
+export type AssistantConversationTurn = {
+  role: "user" | "assistant";
+  content: string;
+  createdAt: string;
+};
+
 export type AssistantAgentInput = {
   text: string;
   timezone: string;
   now: string;
   recentActivities: PlannedActivity[];
   openTasks: WorkTask[];
+  conversationHistory?: AssistantConversationTurn[];
   activeTimeEntry?: TimeEntry;
   currentParticipant?: AgentParticipant;
 };
@@ -275,6 +282,7 @@ class OpenAiAssistantAgentGateway implements AssistantAgentGateway {
             role: "user",
             content: JSON.stringify({
               user_text: input.text,
+              conversation_history: input.conversationHistory ?? [],
               recent_activities: input.recentActivities.map(toRecentActivityContext),
               open_tasks: input.openTasks.map(toOpenTaskContext),
               active_time_entry: input.activeTimeEntry ? toActiveTimeEntryContext(input.activeTimeEntry) : null,
@@ -312,8 +320,12 @@ class OpenAiAssistantAgentGateway implements AssistantAgentGateway {
 function buildAgentPrompt(timezone: string, now: string, currentParticipant?: AgentParticipant): string {
   return [
     "You are a conversational life-planning assistant inside Telegram.",
-    "You receive user text and activity context from recent conversation plus nearby calendar events. Decide what the user wants and return JSON actions.",
+    "You receive user text, conversation history, tasks, and nearby calendar events. Decide what the user wants and return JSON actions.",
     `Timezone: ${timezone}. Current local datetime: ${now}.`,
+    "Use conversation_history as short-term memory for normal chat. Resolve follow-ups like 'the first one', 'цей перший', 'про перший', 'розкажи детальніше', 'продовжи', 'а другий?', and pronouns from the last relevant assistant/user turns.",
+    "If the user asks a general non-calendar question, answer normally with action type answer. Do not force every message into planning.",
+    "If the user asks for current/latest news, live prices, today's events, or other live facts, say that live web search is not connected yet and offer to add it later. Do not invent fresh news.",
+    "For general recommendations or explanations, keep enough detail to make follow-up questions meaningful, and preserve names/titles so later ordinals can refer to them.",
     "Act like a helpful assistant, but never directly perform destructive actions. For deletes, return draft_delete_recent or draft_delete_many so the app can ask for confirmation.",
     "If the user asks to create several future activities in one message, return one draft_create action for every activity. Never turn one of the requested activities into a plain answer.",
     "For daily or weekly plan dictation, split the message into all concrete time blocks. A line like '05-08 біг' means a draft_create with start 05:00 and duration 180 minutes.",

@@ -31,6 +31,7 @@ import {
 import type { CalendarBusySlot, CalendarGateway } from "../calendar/google-calendar-gateway.js";
 import type {
   AssistantAgentAction,
+  AssistantConversationTurn,
   AssistantAgentGateway,
 } from "../ai/openai-assistant-agent-gateway.js";
 import type {
@@ -103,6 +104,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
   const pendingClarifications = new Map<string, PendingClarification>();
   const recentActivitiesByUser = new Map<string, PlannedActivity[]>();
   const recentTasksByUser = new Map<string, WorkTask[]>();
+  const conversationHistoryByUser = new Map<string, AssistantConversationTurn[]>();
 
   bot.command("start", async (ctx) => {
     await ctx.reply(
@@ -131,6 +133,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
         "/analytics_today - show today's planning/work summary",
         "/analytics_week - show this week's planning/work summary",
         "/analytics_month - show this month's planning/work summary",
+        "/forget - clear this Telegram chat memory",
         "",
         "Voice messages can contain natural planning text too.",
       ].join("\n"),
@@ -157,6 +160,12 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
         "Щоб підключити Настю, додай її Telegram ID у .env як NASTIA_TELEGRAM_USER_ID і перезапусти бота.",
       ].join("\n"),
     );
+  });
+
+  bot.command("forget", async (ctx) => {
+    conversationHistoryByUser.delete(userContextKey(ctx));
+
+    await ctx.reply("Ок, я очистив пам'ять цієї розмови. Календар, задачі й трекінг часу не чіпав.");
   });
 
   bot.command("calendar_status", async (ctx) => {
@@ -454,10 +463,13 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
       recentActivities: contextActivities,
       openTasks: await loadAgentContextTasks(ctx),
       activeTimeEntry: await timeEntries.getActive(),
+      conversationHistory: conversationHistoryByUser.get(userContextKey(ctx)) ?? [],
       currentParticipant: getCurrentParticipant(ctx, config),
     });
 
     const actionableActions = result.actions.filter((action) => action.type !== "answer");
+    rememberConversation(ctx, "user", text);
+    rememberConversation(ctx, "assistant", summarizeAssistantResult(result));
 
     if (result.reply && actionableActions.length === 0) {
       await ctx.reply(result.reply);
@@ -1329,6 +1341,88 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
         .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt))
         .slice(0, 20),
     );
+  }
+
+  function rememberConversation(ctx: Context, role: AssistantConversationTurn["role"], content: string): void {
+    const trimmed = content.trim();
+
+    if (!trimmed) {
+      return;
+    }
+
+    const key = userContextKey(ctx);
+    const existing = conversationHistoryByUser.get(key) ?? [];
+    const nextTurn: AssistantConversationTurn = {
+      role,
+      content: truncateForConversationMemory(trimmed),
+      createdAt: new Date().toISOString(),
+    };
+
+    conversationHistoryByUser.set(key, [...existing, nextTurn].slice(-16));
+  }
+
+  function summarizeAssistantResult(result: { reply: string; actions: AssistantAgentAction[] }): string {
+    if (result.reply.trim()) {
+      return result.reply;
+    }
+
+    const answer = result.actions.find(
+      (action): action is Extract<AssistantAgentAction, { type: "answer" }> => action.type === "answer",
+    );
+
+    if (answer?.message.trim()) {
+      return answer.message;
+    }
+
+    const actionSummaries = result.actions.map(formatActionForConversationMemory).filter(Boolean);
+
+    return actionSummaries.length > 0 ? `Дії асистента: ${actionSummaries.join("; ")}` : "";
+  }
+
+  function formatActionForConversationMemory(action: AssistantAgentAction): string {
+    if (action.type === "draft_create") {
+      return `запропонував створити "${action.title}" для ${action.participant} (${action.category}) ${action.start}`;
+    }
+
+    if (action.type === "draft_update_recent") {
+      return `запропонував оновити активність ${action.activityId ?? action.titleContains ?? ""}`.trim();
+    }
+
+    if (action.type === "draft_delete_many") {
+      return "запропонував пакетне видалення активностей";
+    }
+
+    if (action.type === "draft_delete_recent") {
+      return `запропонував видалити активність ${action.activityId ?? action.titleContains ?? ""}`.trim();
+    }
+
+    if (action.type === "task_create") {
+      return `створив задачу "${action.title}" у кошику ${action.basket}`;
+    }
+
+    if (action.type === "ask_clarification") {
+      return action.message;
+    }
+
+    if (action.type === "list") {
+      return "показав список активностей";
+    }
+
+    if (action.type.startsWith("time_")) {
+      return `виконав дію тайм-трекінгу ${action.type}`;
+    }
+
+    if (action.type.startsWith("task_")) {
+      return `виконав дію із задачами ${action.type}`;
+    }
+
+    return action.type;
+  }
+
+  function truncateForConversationMemory(content: string): string {
+    const maxLength = 1_500;
+
+    return content.length > maxLength ? `${content.slice(0, maxLength)}...` : content;
   }
 
   function findRecentTask(ctx: Context, taskId?: string, titleContains?: string): WorkTask | undefined {
