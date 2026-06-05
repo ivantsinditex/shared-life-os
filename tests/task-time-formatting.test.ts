@@ -41,6 +41,15 @@ describe("task formatting", () => {
     expect(dashboard).toContain("Хмельпиво");
     expect(dashboard).toContain("Відкрито: 0");
   });
+
+  it("formats an empty dashboard instead of an empty task list", () => {
+    const dashboard = formatWorkDashboard([]);
+
+    expect(dashboard).toContain("P1: 0");
+    expect(dashboard).toContain("Дедлайни сьогодні: 0");
+    expect(dashboard).toContain("Проекти:");
+    expect(dashboard).toContain("Поки немає проектів.");
+  });
 });
 
 describe("time entry formatting", () => {

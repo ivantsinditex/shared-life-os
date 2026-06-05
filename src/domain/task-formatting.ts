@@ -56,27 +56,38 @@ export function formatTaskList(title: string, tasks: WorkTask[]): string {
 
 export function formatWorkDashboard(tasks: WorkTask[], projectNames: string[] = []): string {
   const activeTasks = tasks.filter((task) => task.status !== "closed");
+  const projects = groupTasksByProject(activeTasks, projectNames);
+  const totalCounts = countPriorities(activeTasks);
+  const blockedCount = activeTasks.filter((task) => task.status === "blocked").length;
+  const dueTodayCount = activeTasks.filter((task) => isDueToday(task.deadline)).length;
+  const lines = [
+    "Робочий dashboard",
+    "",
+    `P1: ${totalCounts.P1} · P2: ${totalCounts.P2} · P3: ${totalCounts.P3} · P4: ${totalCounts.P4}`,
+    `Дедлайни сьогодні: ${dueTodayCount}`,
+    `Заблоковано: ${blockedCount}`,
+    "",
+    "Проекти:",
+  ];
 
-  if (activeTasks.length === 0 && projectNames.length === 0) {
-    return "Робочий dashboard\n\nВідкритих задач немає.";
+  if (projects.size === 0) {
+    lines.push("Поки немає проектів.", "", "Створи перший: /project_add Хмельпиво");
+    return lines.join("\n").trimEnd();
   }
 
-  const projects = groupTasksByProject(activeTasks, projectNames);
-  const lines = ["Робочий dashboard", ""];
-
-  for (const [project, projectTasks] of projects) {
+  Array.from(projects.entries()).forEach(([project, projectTasks], index) => {
     const openTasks = projectTasks.filter((task) => task.status === "open");
     const blockedTasks = projectTasks.filter((task) => task.status === "blocked");
     const counts = countPriorities(projectTasks);
     const dueSoon = projectTasks.filter((task) => isDueWithin(task.deadline, 24)).length;
 
     lines.push(
-      `${project}`,
+      `${index + 1}. ${project}`,
       `Відкрито: ${openTasks.length} · заблоковано: ${blockedTasks.length} · дедлайн 24г: ${dueSoon}`,
       `P1: ${counts.P1} · P2: ${counts.P2} · P3: ${counts.P3} · P4: ${counts.P4}`,
       "",
     );
-  }
+  });
 
   return lines.join("\n").trimEnd();
 }
@@ -209,6 +220,16 @@ function isDueWithin(deadline: string | undefined, hours: number): boolean {
   const parsed = DateTime.fromISO(deadline);
 
   return parsed.isValid && parsed.diffNow("hours").hours <= hours && parsed.diffNow("hours").hours >= 0;
+}
+
+function isDueToday(deadline: string | undefined): boolean {
+  if (!deadline) {
+    return false;
+  }
+
+  const parsed = DateTime.fromISO(deadline);
+
+  return parsed.isValid && parsed.hasSame(DateTime.now(), "day");
 }
 
 function formatDeadline(deadline: string): string {
