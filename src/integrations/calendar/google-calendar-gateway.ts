@@ -2,6 +2,8 @@ import { google } from "googleapis";
 
 import type { AppConfig } from "../../config/config.js";
 
+export const DEFAULT_GOOGLE_EVENT_REMINDER_MINUTES = 30;
+
 export type CalendarEventDraft = {
   title: string;
   startsAt: string;
@@ -179,7 +181,9 @@ type RequiredGoogleCalendarConfig = AppConfig & {
   googlePrivateKey: string;
 };
 
-function toGoogleEvent(draft: CalendarEventDraft) {
+export function toGoogleEvent(draft: CalendarEventDraft) {
+  const reminderMinutes = draft.reminderMinutes ?? DEFAULT_GOOGLE_EVENT_REMINDER_MINUTES;
+
   return {
     summary: draft.title,
     description: draft.description,
@@ -194,16 +198,14 @@ function toGoogleEvent(draft: CalendarEventDraft) {
     visibility: draft.visibility ?? "default",
     transparency: draft.transparency ?? "opaque",
     colorId: draft.colorId,
-    reminders: draft.reminderMinutes === undefined
-      ? undefined
-      : {
-          useDefault: false,
-          overrides: [
-            {
-              method: "popup",
-              minutes: draft.reminderMinutes,
-            },
-          ],
+    reminders: {
+      useDefault: false,
+      overrides: [
+        {
+          method: "popup",
+          minutes: reminderMinutes,
         },
+      ],
+    },
   };
 }
