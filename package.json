@@ -9,7 +9,8 @@
     "start": "node dist/src/main.js",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "knowledge:import:epub": "node scripts/import-epub-knowledge.mjs"
   },
   "dependencies": {
     "@grammyjs/conversations": "^1.2.0",

@@ -2,6 +2,7 @@ import { z } from "zod";
 import { DateTime } from "luxon";
 
 import type { AppConfig } from "../../config/config.js";
+import type { KnowledgeSnippet } from "../../domain/knowledge.js";
 import type { PlannedActivity } from "../../domain/planned-activity.js";
 import type { TaskBasket, TaskPriority, WorkTask } from "../../domain/task.js";
 import type { TimeEntry } from "../../domain/time-entry.js";
@@ -39,6 +40,7 @@ export type AssistantAgentInput = {
   activeTimeEntry?: TimeEntry;
   currentParticipant?: AgentParticipant;
   enableWebSearch?: boolean;
+  knowledgeSnippets?: KnowledgeSnippet[];
 };
 
 export type AssistantAgentResult = {
@@ -331,6 +333,7 @@ class OpenAiAssistantAgentGateway implements AssistantAgentGateway {
               active_time_entry: input.activeTimeEntry ? toActiveTimeEntryContext(input.activeTimeEntry) : null,
               current_participant: input.currentParticipant ?? "",
               web_search_enabled: input.enableWebSearch === true,
+              knowledge_snippets: input.knowledgeSnippets ?? [],
             }),
           },
         ],
@@ -391,6 +394,9 @@ function buildAgentPrompt(timezone: string, now: string, currentParticipant?: Ag
     `Timezone: ${timezone}. Current local datetime: ${now}.`,
     "Use conversation_history as short-term memory for normal chat. Resolve follow-ups like 'the first one', 'цей перший', 'про перший', 'розкажи детальніше', 'продовжи', 'а другий?', and pronouns from the last relevant assistant/user turns.",
     "If the user asks a general non-calendar question, answer normally with action type answer. Do not force every message into planning.",
+    "You may receive knowledge_snippets from private books or notes. Use them as optional background for advice, summaries, and process-improvement answers.",
+    "When using knowledge_snippets, summarize and synthesize. Do not reproduce entire lessons or long passages. If the user asks for a full lesson, offer a useful summary and where it appears instead.",
+    "For requests like знайди урок, самарі уроку, що книга каже про, порада з книги, answer from knowledge_snippets when relevant. If snippets are not enough, say that the local knowledge base does not have enough material yet.",
     "If the user asks for current/latest news, live prices, today's events, or other live facts and web_search_enabled is true, use web search and answer with source links/citations when available.",
     "If the user asks for current/latest news, live prices, today's events, or other live facts and web_search_enabled is false, say that live web search is not connected for this request. Do not invent fresh news.",
     "For general recommendations or explanations, keep enough detail to make follow-up questions meaningful, and preserve names/titles so later ordinals can refer to them.",

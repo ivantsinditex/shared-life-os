@@ -11,6 +11,7 @@ import { createTaskCommands } from "../integrations/telegram/task-commands.js";
 import { createTimeCommands } from "../integrations/telegram/time-commands.js";
 import { createVoiceTranscriptionGateway } from "../integrations/voice/openai-transcription-gateway.js";
 import { FilePlannedActivityRepository } from "../storage/file-planned-activity-repository.js";
+import { FileKnowledgeRepository } from "../storage/file-knowledge-repository.js";
 import { FileTimeEntryRepository } from "../storage/file-time-entry-repository.js";
 import { FileWorkProjectRepository } from "../storage/file-work-project-repository.js";
 import { FileWorkTaskRepository } from "../storage/file-work-task-repository.js";
@@ -24,6 +25,7 @@ export function createApp(config: AppConfig): App {
   const logger = new ConsoleLogger();
   const bot = new Bot(config.telegramBotToken);
   const plannedActivities = new FilePlannedActivityRepository(config.dataDir);
+  const knowledge = new FileKnowledgeRepository(config.dataDir);
   const workProjects = new FileWorkProjectRepository(config.dataDir);
   const workTasks = new FileWorkTaskRepository(config.dataDir);
   const timeEntries = new FileTimeEntryRepository(config.dataDir);
@@ -50,6 +52,7 @@ export function createApp(config: AppConfig): App {
     bot,
     config,
     analyticsInsights,
+    knowledge,
     plannedActivities,
     timeEntries,
     workTasks,
@@ -60,6 +63,7 @@ export function createApp(config: AppConfig): App {
     calendar,
     config,
     logger,
+    knowledge,
     plannedActivities,
     planningTextParser,
     timeEntries,

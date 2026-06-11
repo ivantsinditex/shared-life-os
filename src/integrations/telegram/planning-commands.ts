@@ -79,6 +79,11 @@ import {
 } from "../../domain/time-entry-formatting.js";
 import type { TimeEntryRepository } from "../../domain/time-entry.js";
 import type { Logger } from "../../utils/logger.js";
+import {
+  formatKnowledgeSearchReply,
+  toKnowledgeSnippets,
+  type KnowledgeRepository,
+} from "../../domain/knowledge.js";
 import { buildCloseTaskKeyboard, buildTaskListKeyboard } from "./task-keyboard.js";
 
 type PlanningCommandDeps = {
@@ -86,6 +91,7 @@ type PlanningCommandDeps = {
   assistantAgent: AssistantAgentGateway;
   calendar: CalendarGateway;
   config: AppConfig;
+  knowledge: KnowledgeRepository;
   logger: Logger;
   plannedActivities: PlannedActivityRepository;
   planningTextParser: PlanningTextParserGateway;
@@ -101,6 +107,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     assistantAgent,
     calendar,
     config,
+    knowledge,
     logger,
     plannedActivities,
     planningTextParser,
@@ -157,11 +164,24 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
         "/analytics_today - аналітика за сьогодні",
         "/analytics_week - аналітика за тиждень",
         "/analytics_month - аналітика за місяць",
+        "/knowledge - пошук у приватній базі знань",
         "/forget - очистити пам'ять цього чату",
         "",
         "Голосом можна просити те саме людською мовою.",
       ].join("\n"),
     );
+  });
+
+  bot.command("knowledge", async (ctx) => {
+    const query = getCommandInput(ctx);
+
+    if (!query) {
+      await ctx.reply("Напиши запит після команди. Наприклад: /knowledge як краще планувати операційку");
+      return;
+    }
+
+    const results = await knowledge.search(query, { limit: 5 });
+    await ctx.reply(formatKnowledgeSearchReply(query, results));
   });
 
   bot.callbackQuery(/^agent-work:project:(\d+)$/, async (ctx) => {
@@ -527,6 +547,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
   async function handleAgentText(ctx: Context, text: string): Promise<boolean> {
     await ensureConversationMemoryLoaded();
     const contextActivities = await loadAgentContextActivities(ctx);
+    const knowledgeSnippets = await searchKnowledgeSnippetsSafely(text);
 
     const result = await assistantAgent.respond({
       text,
@@ -538,6 +559,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
       conversationHistory: conversationHistoryByUser.get(userContextKey(ctx)) ?? [],
       currentParticipant: getCurrentParticipant(ctx, config),
       enableWebSearch: looksLikeLiveInformationRequest(text),
+      knowledgeSnippets,
     });
 
     const actionableActions = result.actions.filter((action) => action.type !== "answer");
@@ -587,6 +609,15 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     }
 
     return true;
+  }
+
+  async function searchKnowledgeSnippetsSafely(query: string) {
+    try {
+      return toKnowledgeSnippets(await knowledge.search(query, { limit: 5 }));
+    } catch (error) {
+      logger.warn("Knowledge search failed", { error });
+      return [];
+    }
   }
 
   async function loadAgentContextTasks(ctx: Context): Promise<WorkTask[]> {
@@ -3509,6 +3540,13 @@ function formatMissingActivityHelp(action: "delete" | "update"): string {
     "- Заміни учасника в операційній роботі в середу з Насті на Ваню.",
     "- Покажи /today або /week, а потім попроси змінити конкретну подію.",
   ].join("\n");
+}
+
+function getCommandInput(ctx: Context): string {
+  const text = ctx.message && "text" in ctx.message ? ctx.message.text ?? "" : "";
+  const [, ...rest] = text.split(" ");
+
+  return rest.join(" ").trim();
 }
 
 function isMissingFile(error: unknown): boolean {

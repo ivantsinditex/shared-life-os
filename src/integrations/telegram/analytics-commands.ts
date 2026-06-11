@@ -7,12 +7,14 @@ import { parseParticipant } from "../../domain/task-command-parser.js";
 import type { Participant, PlannedActivityRepository } from "../../domain/planned-activity.js";
 import type { TimeEntryRepository } from "../../domain/time-entry.js";
 import type { WorkTaskRepository } from "../../domain/task.js";
+import { toKnowledgeSnippets, type KnowledgeRepository } from "../../domain/knowledge.js";
 import type { AnalyticsInsightsGateway } from "../ai/openai-analytics-insights-gateway.js";
 
 type AnalyticsCommandDeps = {
   bot: Bot;
   config: AppConfig;
   analyticsInsights: AnalyticsInsightsGateway;
+  knowledge: KnowledgeRepository;
   plannedActivities: PlannedActivityRepository;
   timeEntries: TimeEntryRepository;
   workTasks: WorkTaskRepository;
@@ -67,14 +69,15 @@ export function createAnalyticsCommands(deps: AnalyticsCommandDeps): void {
       activeTimeEntry: active,
       trendBuckets,
     });
-    const insight = await generateInsightSafely(dependencies.analyticsInsights, report);
+    const insight = await generateInsightSafely(dependencies.analyticsInsights, dependencies.knowledge, report);
 
-    await ctx.reply(insight ? [report, "", "AI insight:", insight].join("\n") : report);
+    await ctx.reply(insight ? [report, "", "AI-порада:", insight].join("\n") : report);
   }
 }
 
 async function generateInsightSafely(
   analyticsInsights: AnalyticsInsightsGateway,
+  knowledge: KnowledgeRepository,
   report: string,
 ): Promise<string | undefined> {
   if (!analyticsInsights.isEnabled()) {
@@ -82,7 +85,8 @@ async function generateInsightSafely(
   }
 
   try {
-    return await analyticsInsights.generate({ report, languageHint: "uk" });
+    const knowledgeSnippets = toKnowledgeSnippets(await knowledge.search(report, { limit: 5 }));
+    return await analyticsInsights.generate({ report, languageHint: "uk", knowledgeSnippets });
   } catch {
     return undefined;
   }

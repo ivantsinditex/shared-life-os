@@ -1,10 +1,11 @@
 import { z } from "zod";
 
 import type { AppConfig } from "../../config/config.js";
+import type { KnowledgeSnippet } from "../../domain/knowledge.js";
 
 export interface AnalyticsInsightsGateway {
   isEnabled(): boolean;
-  generate(input: { report: string; languageHint?: string }): Promise<string | undefined>;
+  generate(input: { report: string; languageHint?: string; knowledgeSnippets?: KnowledgeSnippet[] }): Promise<string | undefined>;
 }
 
 const insightResponseSchema = z.object({
@@ -39,7 +40,11 @@ class OpenAiAnalyticsInsightsGateway implements AnalyticsInsightsGateway {
     return true;
   }
 
-  async generate(input: { report: string; languageHint?: string }): Promise<string | undefined> {
+  async generate(input: {
+    report: string;
+    languageHint?: string;
+    knowledgeSnippets?: KnowledgeSnippet[];
+  }): Promise<string | undefined> {
     const response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: {
@@ -56,6 +61,8 @@ class OpenAiAnalyticsInsightsGateway implements AnalyticsInsightsGateway {
               "Read the report and return a short, practical interpretation.",
               "Focus on patterns, risks, and one or two concrete next actions.",
               "Do not invent data that is not in the report.",
+              "If knowledge snippets are provided, use them as private reference material for better advice.",
+              "Do not reproduce long source passages. Summarize, synthesize, and mention the source only when it helps.",
               "Use Ukrainian unless the report is clearly English-only.",
             ].join("\n"),
           },
@@ -64,6 +71,7 @@ class OpenAiAnalyticsInsightsGateway implements AnalyticsInsightsGateway {
             content: JSON.stringify({
               language_hint: input.languageHint ?? "uk",
               report: input.report,
+              knowledge_snippets: input.knowledgeSnippets ?? [],
             }),
           },
         ],

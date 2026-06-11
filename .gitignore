@@ -3,4 +3,5 @@ dist/
 .env
 .DS_Store
 data/*.json
+data/**/*.json
 coverage/
