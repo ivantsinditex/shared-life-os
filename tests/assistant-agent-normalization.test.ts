@@ -432,6 +432,57 @@ describe("normalizeAgentActions", () => {
     });
   });
 
+  it("turns answer-only delete intent into a bulk delete preview", () => {
+    const [action] = normalizeAgentActions({
+      text: "видали усі події завтра",
+      actions: [
+        {
+          type: "answer",
+          message: "Видалити всі події на завтра.",
+        },
+      ],
+      timezone: "Europe/Kiev",
+      now: "2026-07-11 21:07",
+      currentParticipant: "vania",
+    });
+
+    expect(action).toMatchObject({
+      type: "draft_delete_many",
+      scope: {
+        startsAt: "2026-07-12 00:00",
+        endsAt: "2026-07-13 00:00",
+      },
+      keepRules: [],
+    });
+
+    if (action.type === "draft_delete_many") {
+      expect(action.scope.participant).toBeUndefined();
+    }
+  });
+
+  it("turns answer-only list intent into a calendar list action", () => {
+    const [action] = normalizeAgentActions({
+      text: "покажи події завтра",
+      actions: [
+        {
+          type: "answer",
+          message: "Події на завтра.",
+        },
+      ],
+      timezone: "Europe/Kiev",
+      now: "2026-07-11 21:07",
+      currentParticipant: "vania",
+    });
+
+    expect(action).toMatchObject({
+      type: "list",
+      scope: {
+        startsAt: "2026-07-12 00:00",
+        endsAt: "2026-07-13 00:00",
+      },
+    });
+  });
+
   it("understands a weekday through one week", () => {
     const [action] = normalizeAgentActions({
       text: "Заплануй суботу через одну неділю тренування з йоги на 13-14.",

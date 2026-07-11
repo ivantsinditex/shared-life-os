@@ -425,6 +425,7 @@ function buildAgentPrompt(timezone: string, now: string, currentParticipant?: Ag
     "Do not create task_create actions for ordinary life activities like run, yoga, gym, horses, dogs, care, family, date, or together time unless the user explicitly calls them tasks.",
     "If the user asks to start tracking time now in the same message, add one time_start action for the current work basket/task. Do not start timers for future planned activities unless the user explicitly says to start now.",
     "When returning create/update/delete/task/time actions, keep top-level reply empty unless you must ask a clarification.",
+    "Action routing is strict: if the user asks to create, update, delete, list, or show calendar/work/task data, return the matching structured action. Do not answer by paraphrasing the command.",
     "For edits to existing activities, return draft_update_recent. Do not model an update as delete plus create.",
     "For phrases like replace Nastia with Vania, change participant from Nastia to Vania, заміни Настю на Ваню, use draft_update_recent with participant vania and the matching activity id.",
     "Use recent_activities to resolve phrases like this, that, it, last one, this workout, Wednesday operational work, це, це тренування, останнє, у середу операційна робота.",
@@ -447,6 +448,8 @@ function buildAgentPrompt(timezone: string, now: string, currentParticipant?: Ag
     "For list/delete scope_start and scope_end, use local format YYYY-MM-DD HH:mm, not ISO.",
     "For vague create requests missing time/date, ask_clarification.",
     "For list/delete date ranges: today is local 00:00 to tomorrow 00:00; this week is Monday 00:00 to next Monday 00:00.",
+    "Delete intent words include видали, видалити, прибери, очисти, скасуй, delete, remove, cancel. For phrases like 'видали всі події завтра' or 'очисти календар на завтра', return draft_delete_many with the resolved local scope and empty keep_rules.",
+    "List intent words include покажи, покажи мені, що заплановано, список, list, show. For phrases like 'покажи події завтра', return list with the resolved local scope.",
     "Prefer a concise Ukrainian or English reply matching the user's language.",
     "If you can resolve a follow-up from recent activities, use the exact recent activity id.",
     "You also manage work task baskets. Baskets: 911, operational, deep_work, random, personal_brand, other.",
@@ -486,10 +489,15 @@ export function normalizeAgentActions(params: {
 }): AssistantAgentAction[] {
   const createIntent = hasCreateIntent(params.text) && !hasExplicitUpdateOrDeleteIntent(params.text);
   const workViewAction = !createIntent ? buildWorkViewActionFromText(params.text) : undefined;
+  const fallbackCalendarScopeAction = !createIntent ? buildCalendarScopeActionFromAnswerOnlyResult(params) : undefined;
   const fallbackCreateAction = createIntent ? buildCreateActionFromAnswerOnlyResult(params) : undefined;
 
   if (workViewAction) {
     return [workViewAction];
+  }
+
+  if (fallbackCalendarScopeAction) {
+    return [fallbackCalendarScopeAction];
   }
 
   if (fallbackCreateAction) {
@@ -538,6 +546,185 @@ function clampCreateActionsToCurrentWeekEnd(
     const start = parseLocalDateTime(action.start, params.timezone);
     return !start.isValid || start <= currentWeekEnd;
   });
+}
+
+function buildCalendarScopeActionFromAnswerOnlyResult(params: {
+  text: string;
+  actions: AssistantAgentAction[];
+  timezone: string;
+  now: string;
+  currentParticipant?: AgentParticipant;
+}):
+  | Extract<AssistantAgentAction, { type: "draft_delete_many" }>
+  | Extract<AssistantAgentAction, { type: "list" }>
+  | undefined {
+  if (params.actions.some((action) => action.type !== "answer")) {
+    return undefined;
+  }
+
+  const intent = detectCalendarScopeIntent(params.text);
+
+  if (!intent) {
+    return undefined;
+  }
+
+  const scope = buildCalendarScopeFromText(params.text, params);
+
+  if (!scope) {
+    return undefined;
+  }
+
+  if (intent === "delete") {
+    return {
+      type: "draft_delete_many",
+      scope,
+      keepRules: [],
+    };
+  }
+
+  return {
+    type: "list",
+    scope,
+  };
+}
+
+function detectCalendarScopeIntent(text: string): "delete" | "list" | undefined {
+  const normalized = normalizeText(text);
+  const hasDate = hasDateSignal(text);
+  const hasBroadAll = includesAny(normalized, ["усі", "усе", "всі", "все", "all"]);
+  const hasCalendarTarget = includesAny(normalized, [
+    "поді",
+    "активност",
+    "активніст",
+    "івент",
+    "event",
+    "календар",
+    "calendar",
+    "запланован",
+  ]) || (hasBroadAll && hasDate);
+
+  if (!hasCalendarTarget) {
+    return undefined;
+  }
+
+  if (includesAny(normalized, [
+    "видали",
+    "видалити",
+    "удали",
+    "прибери",
+    "очисти",
+    "скасуй",
+    "скасувати",
+    "delete",
+    "remove",
+    "cancel",
+  ])) {
+    return "delete";
+  }
+
+  if (includesAny(normalized, [
+    "покажи",
+    "показати",
+    "що заплановано",
+    "список",
+    "list",
+    "show",
+  ])) {
+    return "list";
+  }
+
+  return undefined;
+}
+
+function buildCalendarScopeFromText(
+  text: string,
+  params: { timezone: string; now: string; currentParticipant?: AgentParticipant },
+): ParsedPlanningScope | undefined {
+  const now = parseLocalDateTime(params.now, params.timezone);
+
+  if (!now.isValid) {
+    return undefined;
+  }
+
+  const normalized = normalizeText(text);
+  let startsAt: DateTime | undefined;
+  let endsAt: DateTime | undefined;
+
+  if (includesAny(normalized, ["наступного тижня", "на наступному тижні", "next week"])) {
+    startsAt = now.startOf("week").plus({ weeks: 1 });
+    endsAt = startsAt.plus({ weeks: 1 });
+  } else if (includesAny(normalized, ["цього тижня", "на цьому тижні", "this week"])) {
+    startsAt = now.startOf("week");
+    endsAt = startsAt.plus({ weeks: 1 });
+  } else {
+    const targetDate = detectExplicitDayMonth(text, now, params.timezone)
+      ?? detectRelativeDate(text, now)
+      ?? detectNearestFutureWeekday(text, now);
+
+    if (!targetDate) {
+      return undefined;
+    }
+
+    startsAt = targetDate.startOf("day");
+    endsAt = startsAt.plus({ days: 1 });
+  }
+
+  const scope: ParsedPlanningScope = {
+    startsAt: startsAt.toFormat("yyyy-MM-dd HH:mm"),
+    endsAt: endsAt.toFormat("yyyy-MM-dd HH:mm"),
+  };
+  const participant = inferScopeParticipant(text, params.currentParticipant);
+  const category = inferScopeCategory(text);
+
+  if (participant) {
+    scope.participant = participant;
+  }
+
+  if (category) {
+    scope.category = category;
+  }
+
+  return scope;
+}
+
+function inferScopeParticipant(text: string, currentParticipant?: AgentParticipant): AgentParticipant | undefined {
+  const normalized = normalizeText(text);
+
+  if (includesAny(normalized, ["мої", "мою", "моя", "мій", "мені", "мене", "для мене", "my"]) && currentParticipant) {
+    return currentParticipant;
+  }
+
+  if (includesAny(normalized, ["разом", "спільн", "для нас", "нам", "нас", "both", "together"])) {
+    return "both";
+  }
+
+  const mentionsNastia = includesAny(normalized, ["настя", "насті", "настю", "настин", "nastia"]);
+  const mentionsVania = includesAny(normalized, ["ваня", "вані", "ваню", "іван", "ivan", "vania", "vanya"]);
+
+  if (mentionsNastia && mentionsVania) {
+    return "both";
+  }
+
+  if (mentionsNastia) {
+    return "nastia";
+  }
+
+  if (mentionsVania) {
+    return "vania";
+  }
+
+  return undefined;
+}
+
+function inferScopeCategory(text: string): AgentCategory | undefined {
+  const normalized = normalizeText(text);
+  const category = inferCategory(text);
+
+  if (category !== "other" || includesAny(normalized, ["інше", "інша", "other"])) {
+    return category;
+  }
+
+  return undefined;
 }
 
 function buildCreateActionFromAnswerOnlyResult(params: {
