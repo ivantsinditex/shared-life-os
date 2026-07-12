@@ -519,7 +519,98 @@ export function normalizeAgentActions(params: {
     return createAction;
   });
 
-  return clampCreateActionsToCurrentWeekEnd(normalizedActions, params);
+  return clampCreateActionsToCurrentWeekEnd(
+    alignDailyCreateActionsToRequestedWeek(normalizedActions, params),
+    params,
+  );
+}
+
+function alignDailyCreateActionsToRequestedWeek(
+  actions: AssistantAgentAction[],
+  params: { text: string; timezone: string; now: string },
+): AssistantAgentAction[] {
+  const normalized = normalizeText(params.text);
+
+  if (!isDailyRepeatRequest(normalized)) {
+    return actions;
+  }
+
+  const weekOffset = detectRelativeWeekOffset(normalized);
+
+  if (weekOffset === undefined) {
+    return actions;
+  }
+
+  const createActions = actions.filter((action): action is Extract<AssistantAgentAction, { type: "draft_create" }> =>
+    action.type === "draft_create",
+  );
+
+  if (createActions.length < 2 || !isSingleRepeatedActivity(createActions)) {
+    return actions;
+  }
+
+  const now = parseLocalDateTime(params.now, params.timezone);
+
+  if (!now.isValid) {
+    return actions;
+  }
+
+  const weekStart = now.startOf("week").plus({ weeks: weekOffset });
+  let createIndex = 0;
+
+  return actions.map((action) => {
+    if (action.type !== "draft_create") {
+      return action;
+    }
+
+    const start = parseLocalDateTime(action.start, params.timezone);
+    const targetDate = weekStart.plus({ days: createIndex });
+    createIndex += 1;
+
+    if (!start.isValid) {
+      return {
+        ...action,
+        start: targetDate.toFormat("yyyy-MM-dd HH:mm"),
+      };
+    }
+
+    return {
+      ...action,
+      start: targetDate
+        .set({
+          hour: start.hour,
+          minute: start.minute,
+          second: 0,
+          millisecond: 0,
+        })
+        .toFormat("yyyy-MM-dd HH:mm"),
+    };
+  });
+}
+
+function isDailyRepeatRequest(normalizedText: string): boolean {
+  return includesAny(normalizedText, [
+    "кожен день",
+    "кожного дня",
+    "щодня",
+    "каждый день",
+    "ежедневно",
+    "every day",
+    "daily",
+  ]);
+}
+
+function isSingleRepeatedActivity(
+  actions: Extract<AssistantAgentAction, { type: "draft_create" }>[],
+): boolean {
+  const keys = new Set(actions.map((action) => [
+    normalizeText(action.title),
+    action.category,
+    action.durationMinutes,
+    action.privacy,
+  ].join("|")));
+
+  return keys.size === 1;
 }
 
 function clampCreateActionsToCurrentWeekEnd(
@@ -650,7 +741,12 @@ function buildCalendarScopeFromText(
   let startsAt: DateTime | undefined;
   let endsAt: DateTime | undefined;
 
-  if (includesAny(normalized, ["наступного тижня", "на наступному тижні", "next week"])) {
+  if (includesAny(normalized, [
+    "наступного тижня",
+    "на наступному тижні",
+    "на наступний тиждень",
+    "next week",
+  ])) {
     startsAt = now.startOf("week").plus({ weeks: 1 });
     endsAt = startsAt.plus({ weeks: 1 });
   } else if (includesAny(normalized, ["цього тижня", "на цьому тижні", "this week"])) {
@@ -1053,7 +1149,14 @@ function detectRelativeWeekOffset(normalizedText: string): number | undefined {
     return weekMatch[1] ? parseSmallInteger(weekMatch[1]) : 1;
   }
 
-  if (includesAny(normalizedText, ["наступного тижня", "следующей недели", "next week"])) {
+  if (includesAny(normalizedText, [
+    "наступного тижня",
+    "на наступному тижні",
+    "на наступний тиждень",
+    "следующей недели",
+    "на следующей неделе",
+    "next week",
+  ])) {
     return 1;
   }
 

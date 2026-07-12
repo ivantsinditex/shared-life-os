@@ -178,6 +178,10 @@ describe("normalizeAgentActions", () => {
     expect(
       actions.every((action) => action.type === "draft_create" && action.category === "reading"),
     ).toBe(true);
+    expect(actions.map((action) => action.type === "draft_create" ? action.start : "")).toEqual([
+      "2026-07-13 20:30",
+      "2026-07-14 20:30",
+    ]);
   });
 
   it("keeps dog activities on the current participant", () => {
