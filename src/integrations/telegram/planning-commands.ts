@@ -2597,26 +2597,35 @@ function getRepeatedActivityParticipant(
   normalizedText: string,
   currentParticipant: Participant | undefined,
 ): Participant {
-  if (normalizedText.includes("наст")) {
-    return "nastia";
-  }
+  const mentionsVania =
+    normalizedText.includes("ван") ||
+    normalizedText.includes("иван") ||
+    normalizedText.includes("іван");
+  const mentionsNastia = normalizedText.includes("наст");
+  const mentionsMe = normalizedText.includes("для мене") || normalizedText.includes("мені") || normalizedText.includes("мене");
+  const mentionsCurrentUserPartner =
+    (currentParticipant === "vania" && mentionsNastia) ||
+    (currentParticipant === "nastia" && mentionsVania);
 
   if (
     normalizedText.includes("разом") ||
     normalizedText.includes("для нас") ||
     normalizedText.includes("усім") ||
-    normalizedText.includes("всім")
+    normalizedText.includes("всім") ||
+    normalizedText.includes("обом") ||
+    normalizedText.includes("удвох") ||
+    normalizedText.includes("вдвох") ||
+    (mentionsVania && mentionsNastia) ||
+    (mentionsMe && mentionsCurrentUserPartner)
   ) {
     return "both";
   }
 
-  if (
-    normalizedText.includes("ван") ||
-    normalizedText.includes("иван") ||
-    normalizedText.includes("іван") ||
-    normalizedText.includes("для мене") ||
-    normalizedText.includes("мені")
-  ) {
+  if (mentionsNastia) {
+    return "nastia";
+  }
+
+  if (mentionsVania || mentionsMe) {
     return currentParticipant ?? "vania";
   }
 

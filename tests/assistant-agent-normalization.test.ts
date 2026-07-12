@@ -145,6 +145,41 @@ describe("normalizeAgentActions", () => {
     });
   });
 
+  it("keeps topical shared activities on both participants", () => {
+    const actions = normalizeAgentActions({
+      text: "заплануй на кожен день на наступний тиждень читання для мене і Насті разом з 20:30 по 21:30",
+      actions: [
+        {
+          ...baseCreateAction,
+          title: "Читання разом",
+          participant: "vania",
+          category: "reading",
+          start: "2026-07-17 20:30",
+          privacy: "shared_details",
+        },
+        {
+          ...baseCreateAction,
+          title: "Читання разом",
+          participant: "vania",
+          category: "reading",
+          start: "2026-07-18 20:30",
+          privacy: "shared_details",
+        },
+      ],
+      timezone: "Europe/Kiev",
+      now: "2026-07-12 11:31",
+      currentParticipant: "vania",
+    });
+
+    expect(actions).toHaveLength(2);
+    expect(
+      actions.every((action) => action.type === "draft_create" && action.participant === "both"),
+    ).toBe(true);
+    expect(
+      actions.every((action) => action.type === "draft_create" && action.category === "reading"),
+    ).toBe(true);
+  });
+
   it("keeps dog activities on the current participant", () => {
     const [action] = normalizeAgentActions({
       text: "Створи подію з Драйвом завтра о 12.",

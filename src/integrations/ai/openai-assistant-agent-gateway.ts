@@ -1263,6 +1263,10 @@ function normalizeParticipant(
   text: string,
   currentParticipant?: AgentParticipant,
 ): AgentParticipant {
+  if (mentionsExplicitSharedParticipant(text, currentParticipant)) {
+    return "both";
+  }
+
   if (mentionsHumanPartner(text, currentParticipant)) {
     return "both";
   }
@@ -1289,6 +1293,10 @@ function normalizePrivacy(privacy: AgentPrivacy, text: string): AgentPrivacy {
 }
 
 function inferParticipant(text: string, currentParticipant?: AgentParticipant): AgentParticipant {
+  if (mentionsExplicitSharedParticipant(text, currentParticipant)) {
+    return "both";
+  }
+
   if (mentionsHumanPartner(text, currentParticipant)) {
     return "both";
   }
@@ -1368,6 +1376,19 @@ function mentionsHumanPartner(text: string, currentParticipant?: AgentParticipan
   }
 
   return includesAny(normalized, ["побачення", "разом", "нам", "для нас"]) || (mentionsVania && mentionsNastia);
+}
+
+function mentionsExplicitSharedParticipant(text: string, currentParticipant?: AgentParticipant): boolean {
+  const normalized = normalizeText(text);
+  const mentionsVania = includesAny(normalized, ["ваня", "ванею", "вані", "іван", "іваном", "івану", "ivan", "vania", "vanya"]);
+  const mentionsNastia = includesAny(normalized, ["настя", "насті", "настю", "настей", "настею", "nastia", "nastya"]);
+  const mentionsMe = includesAny(normalized, ["для мене", "мені", "мене", "зі мною", "со мной", "me", "my"]);
+  const mentionsShared = includesAny(normalized, ["разом", "для нас", "нам", "обом", "удвох", "вдвох", "together", "both"]);
+  const mentionsCurrentUserPartner =
+    (currentParticipant === "vania" && mentionsNastia) ||
+    (currentParticipant === "nastia" && mentionsVania);
+
+  return (mentionsVania && mentionsNastia) || (mentionsMe && mentionsCurrentUserPartner) || (mentionsShared && mentionsCurrentUserPartner);
 }
 
 function mentionsDog(text: string): boolean {
