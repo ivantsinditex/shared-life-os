@@ -2173,8 +2173,11 @@ function looksLikeDeleteRequest(text: string): boolean {
     "удал",
     "прибери",
     "прибрать",
+    "очист",
+    "очищ",
     "delete",
     "remove",
+    "clear",
   ].some((token) => normalized.includes(token));
 }
 
@@ -2199,7 +2202,7 @@ function looksLikeContextualReference(text: string): boolean {
   ].some((token) => normalized.includes(token));
 }
 
-function buildDeterministicBulkDeleteScope(text: string, timezone: string): ParsedPlanningScope | undefined {
+export function buildDeterministicBulkDeleteScope(text: string, timezone: string): ParsedPlanningScope | undefined {
   const normalized = normalizeText(text);
 
   if (!looksLikeDeleteRequest(text) || !looksLikeAllEventsRequest(normalized)) {
@@ -2219,9 +2222,11 @@ function buildDeterministicBulkDeleteScope(text: string, timezone: string): Pars
   ].some((token) => normalized.includes(token));
 
   if (weekRequested) {
+    const weekStart = resolveBulkDeleteWeekStart(now, normalized);
+
     return {
-      startsAt: now.startOf("week").toFormat("yyyy-MM-dd HH:mm"),
-      endsAt: now.startOf("week").plus({ weeks: 1 }).toFormat("yyyy-MM-dd HH:mm"),
+      startsAt: weekStart.toFormat("yyyy-MM-dd HH:mm"),
+      endsAt: weekStart.plus({ weeks: 1 }).toFormat("yyyy-MM-dd HH:mm"),
       participant: resolveBulkDeleteParticipant(normalized),
     };
   }
@@ -2237,20 +2242,57 @@ function buildDeterministicBulkDeleteScope(text: string, timezone: string): Pars
   return undefined;
 }
 
+function resolveBulkDeleteWeekStart(now: DateTime, normalizedText: string): DateTime {
+  const currentWeekStart = now.startOf("week");
+
+  if (includesAnyNormalized(normalizedText, [
+    "наступний тиж",
+    "наступного тиж",
+    "на наступному тиж",
+    "следующ",
+    "next week",
+  ])) {
+    return currentWeekStart.plus({ weeks: 1 });
+  }
+
+  if (includesAnyNormalized(normalizedText, [
+    "попередний тиж",
+    "попереднього тиж",
+    "минулий тиж",
+    "минулого тиж",
+    "прошл",
+    "last week",
+    "previous week",
+  ])) {
+    return currentWeekStart.minus({ weeks: 1 });
+  }
+
+  return currentWeekStart;
+}
+
+function includesAnyNormalized(normalizedText: string, values: string[]): boolean {
+  return values.some((value) => normalizedText.includes(normalizeText(value)));
+}
+
 function looksLikeAllEventsRequest(normalizedText: string): boolean {
   const hasAll = [
     "вси",
     "уси",
     "усе",
     "все",
+    "весь",
+    "вся",
+    "всю",
     "all",
   ].some((token) => normalizedText.includes(token));
   const hasEventNoun = [
     "подии",
     "падзеи",
     "активност",
+    "календар",
     "events",
     "activities",
+    "calendar",
   ].some((token) => normalizedText.includes(token));
 
   return hasAll && hasEventNoun;
