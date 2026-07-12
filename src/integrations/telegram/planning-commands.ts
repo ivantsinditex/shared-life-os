@@ -122,6 +122,7 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
   const pendingUpdates = new Map<string, PendingUpdate>();
   const pendingDeletes = new Map<string, PlannedActivity>();
   const pendingBulkDeletes = new Map<string, PendingBulkDelete>();
+  const pendingCalendarBulkDeletes = new Map<string, PendingCalendarBulkDelete>();
   const pendingClarifications = new Map<string, PendingClarification>();
   const recentActivitiesByUser = new Map<string, PlannedActivity[]>();
   const recentTasksByUser = new Map<string, WorkTask[]>();
@@ -1539,6 +1540,40 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     await ctx.reply("Масове видалення скасовано. Нічого не змінено.");
   });
 
+  bot.callbackQuery(/^calendar:delete-many-confirm:(.+)$/, async (ctx) => {
+    const pending = pendingCalendarBulkDeletes.get(ctx.match[1]);
+
+    await ctx.answerCallbackQuery();
+
+    if (!pending) {
+      await ctx.reply("Підтвердження видалення з календаря застаріло. Надішли запит ще раз.");
+      return;
+    }
+
+    pendingCalendarBulkDeletes.delete(ctx.match[1]);
+
+    const result = await deleteCalendarEvents({
+      calendar,
+      events: pending.deleteCandidates,
+      logger,
+    });
+
+    await ctx.reply(
+      [
+        `Видалено подій з календаря: ${result.deletedCount}.`,
+        result.failedCount > 0 ? `Не вдалося видалити: ${result.failedCount}.` : "",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
+  });
+
+  bot.callbackQuery(/^calendar:delete-many-cancel:(.+)$/, async (ctx) => {
+    pendingCalendarBulkDeletes.delete(ctx.match[1]);
+    await ctx.answerCallbackQuery();
+    await ctx.reply("Видалення з календаря скасовано. Нічого не змінено.");
+  });
+
   bot.callbackQuery(/^plan:clarify:(.+):([^:]+):(.+)$/, async (ctx) => {
     const [, token, field, value] = ctx.match;
     const pending = pendingClarifications.get(token);
@@ -1974,6 +2009,22 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     }
 
     if (deletionPlan.deleteCandidates.length === 0) {
+      const calendarEvents = await listCalendarEventsByScope(calendar, scope, config.timezone);
+
+      if (calendarEvents.length > 0 && keepRules.length === 0) {
+        const token = shortId(randomUUID());
+        pendingCalendarBulkDeletes.set(token, {
+          deleteCandidates: calendarEvents,
+        });
+
+        await ctx.reply(formatCalendarBulkDeletePreview(calendarEvents, config.timezone), {
+          reply_markup: new InlineKeyboard()
+            .text(`Видалити ${calendarEvents.length}`, `calendar:delete-many-confirm:${token}`)
+            .text("Скасувати", `calendar:delete-many-cancel:${token}`),
+        });
+        return;
+      }
+
       await ctx.reply("Не знайшов активностей для видалення.");
       return;
     }
@@ -2080,6 +2131,10 @@ type PendingUpdate = {
 type PendingBulkDelete = {
   deleteCandidates: PlannedActivity[];
   keptActivities: PlannedActivity[];
+};
+
+type PendingCalendarBulkDelete = {
+  deleteCandidates: CalendarEvent[];
 };
 
 type PendingClarification = {
@@ -2910,6 +2965,59 @@ async function listActivitiesByScope(
   });
 }
 
+async function listCalendarEventsByScope(
+  calendar: CalendarGateway,
+  scope: ParsedPlanningScope,
+  timezone: string,
+): Promise<CalendarEvent[]> {
+  const startsAt = parseScopeDate(scope.startsAt, timezone);
+  const endsAt = parseScopeDate(scope.endsAt, timezone);
+  const events = await calendar.listEvents({ startsAt, endsAt });
+
+  return events.filter((event) => calendarEventMatchesScope(event, scope));
+}
+
+function calendarEventMatchesScope(event: CalendarEvent, scope: ParsedPlanningScope): boolean {
+  const text = normalizeCalendarEventText(event.title);
+  const participantMatches = !scope.participant || participantTerms(scope.participant).some((term) => text.includes(term));
+  const categoryMatches = !scope.category || categoryTerms(scope.category).some((term) => text.includes(term));
+  const titleMatches =
+    !scope.titleContains ||
+    text.includes(normalizeCalendarEventText(scope.titleContains));
+
+  return participantMatches && categoryMatches && titleMatches;
+}
+
+function normalizeCalendarEventText(value: string): string {
+  return value.toLocaleLowerCase("uk-UA");
+}
+
+function participantTerms(participant: Participant): string[] {
+  const terms: Record<Participant, string[]> = {
+    vania: ["ваня", "іван", "ivan", "vania", "vanya"],
+    nastia: ["настя", "насті", "настю", "nastia", "nastya"],
+    both: ["разом", "both", "together"],
+  };
+
+  return terms[participant];
+}
+
+function categoryTerms(category: PlannedActivity["category"]): string[] {
+  const terms: Record<PlannedActivity["category"], string[]> = {
+    sport: ["спорт", "sport", "воркаут", "workout", "йога", "yoga", "зал", "тренування"],
+    work: ["робота", "work", "операцій", "зустріч", "таск", "задач"],
+    learning: ["навчання", "learning"],
+    reading: ["читання", "reading"],
+    dogs: ["собаки", "пес", "драйв", "федр", "dog"],
+    horse: ["кінь", "подарунок", "конюш", "horse"],
+    care: ["догляд", "care"],
+    together: ["час разом", "разом", "побачення", "зустріч"],
+    other: ["інше", "other"],
+  };
+
+  return terms[category];
+}
+
 function planBulkDelete(
   activities: PlannedActivity[],
   keepRules: ParsedPlanningKeepRule[],
@@ -2995,6 +3103,15 @@ function formatBulkDeletePreview(
   return lines.join("\n");
 }
 
+function formatCalendarBulkDeletePreview(events: CalendarEvent[], timezone: string): string {
+  return [
+    `Видалити подій з Google Calendar: ${events.length}?`,
+    "",
+    "Видаляємо:",
+    ...formatCalendarEventLines(events, timezone),
+  ].join("\n");
+}
+
 function formatUnmatchedKeepRules(rules: ParsedPlanningKeepRule[]): string {
   return [
     "I found matching activities to delete, but could not satisfy every keep exception.",
@@ -3039,6 +3156,24 @@ function formatActivityLines(activities: PlannedActivity[], timezone: string): s
   });
 }
 
+function formatCalendarEventLines(events: CalendarEvent[], timezone: string): string[] {
+  return events.map((event, index) => {
+    const start = DateTime.fromISO(event.startsAt).setZone(timezone);
+    const end = DateTime.fromISO(event.endsAt).setZone(timezone);
+
+    return [
+      `${index + 1}.`,
+      start.setLocale("uk").toFormat("ccc HH:mm"),
+      "-",
+      end.toFormat("HH:mm"),
+      "|",
+      event.title,
+      "|",
+      `id: ${shortId(event.id)}`,
+    ].join(" ");
+  });
+}
+
 async function deleteActivities(params: {
   activities: PlannedActivity[];
   calendar: CalendarGateway;
@@ -3068,6 +3203,30 @@ async function deleteActivities(params: {
       await params.plannedActivities.update({
         ...activity,
         syncStatus: "sync_failed",
+      });
+      failedCount += 1;
+    }
+  }
+
+  return { deletedCount, failedCount };
+}
+
+async function deleteCalendarEvents(params: {
+  calendar: CalendarGateway;
+  events: CalendarEvent[];
+  logger: Logger;
+}): Promise<{ deletedCount: number; failedCount: number }> {
+  let deletedCount = 0;
+  let failedCount = 0;
+
+  for (const event of params.events) {
+    try {
+      await params.calendar.deleteEvent(event.id);
+      deletedCount += 1;
+    } catch (error) {
+      params.logger.warn("Google Calendar bulk delete failed", {
+        eventId: event.id,
+        error: error instanceof Error ? error.message : String(error),
       });
       failedCount += 1;
     }
