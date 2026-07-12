@@ -2009,7 +2009,15 @@ export function createPlanningCommands(deps: PlanningCommandDeps): void {
     }
 
     if (deletionPlan.deleteCandidates.length === 0) {
-      const calendarEvents = await listCalendarEventsByScope(calendar, scope, config.timezone);
+      let calendarEvents: CalendarEvent[];
+
+      try {
+        calendarEvents = await listCalendarEventsByScope(calendar, scope, config.timezone);
+      } catch (error) {
+        logger.warn("Calendar lookup for bulk delete failed", { error, scope });
+        await ctx.reply(formatCalendarLookupFailed(error));
+        return;
+      }
 
       if (calendarEvents.length > 0 && keepRules.length === 0) {
         const token = shortId(randomUUID());
@@ -3026,6 +3034,19 @@ async function listCalendarEventsByScope(
   const events = await calendar.listEvents({ startsAt, endsAt });
 
   return events.filter((event) => calendarEventMatchesScope(event, scope));
+}
+
+function formatCalendarLookupFailed(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+
+  return [
+    "Не зміг прочитати Google Calendar для видалення.",
+    "Тому не можу безпечно сказати, що подій немає.",
+    "",
+    `Технічно: ${message}`,
+    "",
+    "Перевір /calendar_status і Railway змінні GOOGLE_CALENDAR_ID, GOOGLE_CLIENT_EMAIL, GOOGLE_PRIVATE_KEY.",
+  ].join("\n");
 }
 
 function calendarEventMatchesScope(event: CalendarEvent, scope: ParsedPlanningScope): boolean {

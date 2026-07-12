@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   DEFAULT_GOOGLE_EVENT_REMINDER_MINUTES,
+  DisabledCalendarGateway,
   toGoogleEvent,
   type CalendarEventDraft,
 } from "../src/integrations/calendar/google-calendar-gateway.js";
@@ -29,6 +30,19 @@ describe("toGoogleEvent", () => {
         },
       ],
     });
+  });
+});
+
+describe("DisabledCalendarGateway", () => {
+  it("does not silently treat missing Google Calendar config as an empty calendar", async () => {
+    const gateway = new DisabledCalendarGateway();
+
+    await expect(
+      gateway.listEvents({
+        startsAt: "2026-07-13T00:00:00.000+03:00",
+        endsAt: "2026-07-20T00:00:00.000+03:00",
+      }),
+    ).rejects.toThrow("Google Calendar credentials are not configured");
   });
 });
 

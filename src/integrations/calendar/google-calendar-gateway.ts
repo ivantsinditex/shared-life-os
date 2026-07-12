@@ -1,4 +1,4 @@
-import { google } from "googleapis";
+import { google, type calendar_v3 } from "googleapis";
 
 import type { AppConfig } from "../../config/config.js";
 
@@ -138,18 +138,16 @@ export class GoogleCalendarGateway implements CalendarGateway {
       calendarId: this.config.googleCalendarId,
       timeMin: params.startsAt,
       timeMax: params.endsAt,
+      timeZone: this.config.timezone,
       singleEvents: true,
       orderBy: "startTime",
+      showDeleted: false,
+      maxResults: 2500,
     });
 
     return (response.data.items ?? [])
-      .filter((event) => event.id && event.start?.dateTime && event.end?.dateTime)
-      .map((event) => ({
-        id: event.id as string,
-        title: event.summary ?? "Подія календаря",
-        startsAt: event.start?.dateTime as string,
-        endsAt: event.end?.dateTime as string,
-      }));
+      .map(toCalendarEvent)
+      .filter((event): event is CalendarEvent => Boolean(event));
   }
 }
 
@@ -170,8 +168,8 @@ export class DisabledCalendarGateway implements CalendarGateway {
     return [];
   }
 
-  async listEvents(): Promise<CalendarEvent[]> {
-    return [];
+  async listEvents(_params: { startsAt: string; endsAt: string }): Promise<CalendarEvent[]> {
+    throw new Error("Google Calendar credentials are not configured");
   }
 }
 
@@ -207,5 +205,21 @@ export function toGoogleEvent(draft: CalendarEventDraft) {
         },
       ],
     },
+  };
+}
+
+function toCalendarEvent(event: calendar_v3.Schema$Event): CalendarEvent | undefined {
+  const startsAt = event.start?.dateTime ?? event.start?.date;
+  const endsAt = event.end?.dateTime ?? event.end?.date;
+
+  if (!event.id || !startsAt || !endsAt) {
+    return undefined;
+  }
+
+  return {
+    id: event.id,
+    title: event.summary ?? "Подія календаря",
+    startsAt,
+    endsAt,
   };
 }
